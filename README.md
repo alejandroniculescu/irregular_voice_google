@@ -141,6 +141,19 @@ so the app should accept only answers where `questions.match()` finds a value
 and the lowest token probability (`min_p` column) is high enough, and ask again
 otherwise.
 
+`questions.resolve(question, text, min_p)` makes that call:
+
+- **accept**: a listed value is spelled out and `min_p` ≥ 0.5;
+- **confirm** ("Meinten Sie Sieben?"): a listed value heard with low
+  confidence, or a transcript that only *sounds like* one value — compared by
+  Kölner Phonetik code (`phonetic.py`), so "Seben" → "sieben" and
+  "Aushalten" → "ausschalten";
+- **repeat**: no value, several sound-alikes, or a loop-guard flag.
+
+Replaying the adapter's test transcripts of the command clips (15, against the
+speaker's 25-command list) gave 12 accepted (all right), 2 confirmed (both
+right) and 1 repeat; nothing wrong was accepted.
+
 ## whisper.cpp
 
 The app runtime is [whisper.cpp](https://github.com/ggml-org/whisper.cpp)
@@ -187,6 +200,9 @@ uv run ivg-synth --exclude data/processed/trim/manifest.csv   # macOS: TTS booki
 uv run ivg-train --augment 0.5 --extra-manifest data/synthetic/booking/manifest.csv
 ```
 
+`--dora` trains DoRA instead of plain LoRA and `--rank` sets the adapter rank
+(default 32).
+
 - `--augment P` applies each augmentation with probability `P` to training
   batches only (numpy, no ffmpeg needed on the GPU box). Augmented runs need
   more epochs; use a long `--patience` so a lucky early epoch does not end the run.
@@ -221,7 +237,8 @@ src/irregular_voice_google/
   preprocess.py  # trim / tempo / EQ variants
   guard.py       # Whisper repetition-loop guard
   profile.py     # per-speaker profile -> Whisper prompt
-  questions.py   # per-question prompts, GBNF grammars, answer matching
+  questions.py   # per-question prompts, GBNF grammars, answer matching/decisions
+  phonetic.py    # Kölner Phonetik sound codes
   ggml.py        # HF model / LoRA adapter -> whisper.cpp ggml
   cpp.py         # whisper.cpp backend (whisper-cli)
 resources/

@@ -12,6 +12,8 @@ people wrap around it ("nach Berlin", "am 12. März bitte").
   constraint is soft (``--grammar-penalty``), so an off-list answer can still
   come through, but it is strongly steered to the list.
 - ``match(question, text)``: the value the answer names, or None.
+- ``resolve(question, text, min_p)``: what the app should do with an answer:
+  accept it, ask "Meinten Sie …?", or ask again.
 """
 
 from __future__ import annotations
@@ -21,6 +23,7 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from irregular_voice_google import phonetic
 from irregular_voice_google.lexicon import load_lexicon
 from irregular_voice_google.profile import Profile
 from irregular_voice_google.text import normalize
@@ -81,3 +84,34 @@ def match(question: Question, text: str) -> str | None:
     norm = f" {normalize(text)} "
     found = [v for v in question.values if re.search(rf"(?<!\w){re.escape(normalize(v))}(?!\w)", norm)]
     return max(found, key=len) if found else None
+
+
+def sounds_like(question: Question, text: str) -> list[str]:
+    """Listed values whose Kölner Phonetik code appears in ``text`` ("Seben" -> "sieben")."""
+    heard = f" {phonetic.code(normalize(text))} "
+    found = [v for v in question.values if (c := phonetic.code(normalize(v))) and f" {c} " in heard]
+    return [v for v in found if not any(v != w and normalize(v) in normalize(w) for w in found)]  # longest only
+
+
+@dataclass
+class Decision:
+    action: str  # "accept", "confirm" ("Meinten Sie …?") or "repeat"
+    value: str | None = None
+    candidates: list[str] = field(default_factory=list)
+
+
+def resolve(question: Question, text: str, min_p: float | None = None, threshold: float = 0.5,
+            flagged: bool = False) -> Decision:
+    """Accept only a spelled-out value heard confidently; a low-confidence or sound-alike value is confirmed.
+
+    ``min_p`` is whisper.cpp's lowest token probability (None skips the check);
+    ``flagged`` is the loop guard's verdict, which always means "please repeat".
+    """
+    if flagged:
+        return Decision("repeat")
+    if value := match(question, text):
+        return Decision("accept" if min_p is None or min_p >= threshold else "confirm", value, [value])
+    candidates = sounds_like(question, text)
+    if len(candidates) == 1:
+        return Decision("confirm", candidates[0], candidates)
+    return Decision("repeat", None, candidates)

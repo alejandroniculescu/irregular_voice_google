@@ -102,6 +102,7 @@ def main() -> None:
     parser.add_argument("--grad-accum", type=int, default=1)
     parser.add_argument("--lr", type=float, default=5e-4)
     parser.add_argument("--rank", type=int, default=32)
+    parser.add_argument("--dora", action="store_true", help="DoRA: learn magnitude and direction of each update.")
     parser.add_argument("--patience", type=int, default=3, help="Stop after N epochs without dev improvement.")
     parser.add_argument("--limit", type=int, help="Only the first N train/dev utterances (smoke tests).")
     parser.add_argument("--seed", type=int, default=0)
@@ -140,6 +141,7 @@ def main() -> None:
         model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
     model = get_peft_model(model, LoraConfig(
         r=args.rank, lora_alpha=2 * args.rank, lora_dropout=0.05, target_modules=LORA_TARGETS, bias="none",
+        use_dora=args.dora,
     ))
     model.print_trainable_parameters()
     model.to(device).train()
