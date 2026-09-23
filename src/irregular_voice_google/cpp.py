@@ -17,6 +17,7 @@ import tempfile
 import wave
 from dataclasses import dataclass
 from pathlib import Path
+from typing import BinaryIO
 
 import numpy as np
 
@@ -41,8 +42,8 @@ def available() -> bool:
     return shutil.which(WHISPER_CLI) is not None
 
 
-def write_wav(audio: np.ndarray, path: Path) -> None:
-    with wave.open(str(path), "wb") as w:
+def write_wav(audio: np.ndarray, path: Path | BinaryIO) -> None:
+    with wave.open(str(path) if isinstance(path, (str, Path)) else path, "wb") as w:
         w.setnchannels(1), w.setsampwidth(2), w.setframerate(SAMPLE_RATE)
         w.writeframes((np.clip(audio, -1, 1) * 32767).astype(np.int16).tobytes())
 

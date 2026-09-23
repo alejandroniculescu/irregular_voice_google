@@ -174,6 +174,17 @@ prompt or grammar, and with the grammar on it misheard clear answers
 `--grammar` turn them back on. `--wav a.wav b.wav …` replays files instead of
 the microphone, for a dry run.
 
+```bash
+uv run ivg-demo --compare --model models/ggml/<adapter>-q5_0.bin
+```
+
+`--compare` shows the before/after instead: it transcribes the speaker's test
+clips (never trained on) with the base model and the adapter and opens a local
+page with each clip's waveform, spectrogram (0–8 kHz, which shows the
+muffling) and playback, the two transcripts with wrong words marked, and the
+overall WER. The page embeds the audio, so it is written to `data/demo/` and
+must stay there.
+
 ## whisper.cpp
 
 The app runtime is [whisper.cpp](https://github.com/ggml-org/whisper.cpp)
@@ -261,7 +272,7 @@ src/irregular_voice_google/
   phonetic.py    # Kölner Phonetik sound codes
   ggml.py        # HF model / LoRA adapter -> whisper.cpp ggml
   cpp.py         # whisper.cpp backend (whisper-cli)
-  demo.py        # live booking demo (mic -> whisper.cpp -> accept/confirm/repeat)
+  demo.py        # live booking demo + base-vs-adapter page (compare.html)
 resources/
   lexicon/       # one <slot>.txt per slot
   questions_de.json  # booking questions: slots and carrier words

@@ -13,22 +13,36 @@ again. It ends by reading back the booking for a final yes/no.
 Every take is kept under ``data/demo/<timestamp>/`` (git-ignored) with its
 transcript, so demo sessions can become training data later (with consent).
 macOS only (``say``, ffmpeg's avfoundation input).
+
+``--compare`` instead writes a local page (under ``--out``, git-ignored) with
+the speaker's held-out test clips: waveform, spectrogram, playback and the base
+model's transcript next to the adapter's, wrong words marked:
+
+    uv run ivg-demo --compare --model models/ggml/<adapter>-q5_0.bin
 """
 
 from __future__ import annotations
 
 import argparse
+import base64
+import io
 import json
 import re
 import subprocess
+import random
 import time
 from datetime import datetime
+from importlib.resources import files
 from pathlib import Path
 
 from irregular_voice_google import cpp, questions
+import jiwer
+
 from irregular_voice_google.guard import guard
+from irregular_voice_google.manifest import load_manifest
 from irregular_voice_google.preprocess import SAMPLE_RATE, load
 from irregular_voice_google.profile import Profile, load_profile
+from irregular_voice_google.text import normalize
 
 FLOW = ["destination", "origin", "date", "airline"]
 MAX_TRIES = 3
@@ -47,6 +61,37 @@ def record(dest: Path, mic: str) -> None:
                              "-c:a", "pcm_s16le", str(dest)], stdin=subprocess.PIPE)
     input("  ● Aufnahme läuft … [Enter] zum Beenden ")
     proc.communicate(b"q")
+
+
+def _marked(hyp: str, ref: str) -> list[tuple[str, bool]]:
+    """Hypothesis words, each flagged by whether it occurs in the reference."""
+    ref_words = set(normalize(ref).split())
+    return [(w, all(n in ref_words for n in normalize(w).split())) for w in hyp.split()]
+
+
+def compare(args: argparse.Namespace) -> None:
+    """Base model vs adapter on test clips the adapter never trained on, as a local web page."""
+    clips = [u for u in load_manifest(args.manifest) if u.split == "test"]
+    clips = random.Random(args.seed).sample(clips, min(args.n, len(clips))) if args.n else clips
+    print(f"Transkribiere {len(clips)} Test-Aufnahmen mit beiden Modellen …")
+    hyps = [cpp.transcribe(model, clips)[0] for model in (args.base, args.model)]
+    refs = [normalize(u.text) for u in clips]
+    rows = []
+    for i, u in enumerate(clips):
+        wav = io.BytesIO()
+        cpp.write_wav(load(u.audio), wav)
+        rows.append({"ref": u.text, "wav": base64.b64encode(wav.getvalue()).decode(), "hyps": [
+            {"words": _marked(h[i], u.text), "exact": normalize(h[i]) == refs[i],
+             "wer": jiwer.wer(refs[i], normalize(h[i]) or "-")} for h in hyps]})
+    data = {"models": ["Whisper", "angepasst"], "clips": rows,
+            "wer": [jiwer.wer(refs, [normalize(t) for t in h]) for h in hyps],
+            "exact": [sum(normalize(t) == r for t, r in zip(h, refs)) for h in hyps]}
+    page = files("irregular_voice_google").joinpath("compare.html").read_text(encoding="utf-8")
+    out = Path(args.out) / f"compare-{datetime.now():%Y%m%d-%H%M%S}.html"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(page.replace("/*DATA*/null", json.dumps(data, ensure_ascii=False)), encoding="utf-8")
+    print(f"Wortfehlerrate: Whisper {data['wer'][0]:.0%}, angepasst {data['wer'][1]:.0%}\n{out}")
+    subprocess.run(["open", str(out)])
 
 
 class Session:
@@ -137,6 +182,12 @@ def main() -> None:
     parser.add_argument("--grammar", action="store_true", help="per-question GBNF grammar (hurt the adapter)")
     parser.add_argument("--wav", nargs="+", help="use these files as the answers, in order (testing)")
     parser.add_argument("--out", default="data/demo")
+    parser.add_argument("--compare", action="store_true", help="test clips page: base model vs adapter")
+    parser.add_argument("--base", default="models/ggml/primeline__whisper-large-v3-turbo-german-q5_0.bin",
+                        help="model to compare against (the adapter's base)")
+    parser.add_argument("--manifest", default="data/processed/trim/manifest.csv", help="clips for --compare")
+    parser.add_argument("--n", type=int, help="--compare only N random test clips")
+    parser.add_argument("--seed", type=int, default=0)
     args = parser.parse_args()
     if args.list_mics:
         return list_mics()
@@ -144,4 +195,6 @@ def main() -> None:
         parser.error("--model must be an existing ggml .bin (see ivg-ggml)")
     if not cpp.available():
         parser.error("whisper-cli not found (brew install whisper-cpp)")
+    if args.compare:
+        return compare(args)
     Session(args, load_profile(args.profile) if args.profile else Profile(speaker="demo")).run()
