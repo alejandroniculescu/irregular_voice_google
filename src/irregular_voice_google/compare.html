@@ -17,10 +17,13 @@
   main { max-width: 980px; margin: 0 auto; padding: 32px 16px 64px; }
   h1 { font-size: 26px; margin: 0 0 4px; }
   .sub { color: var(--muted); margin: 0 0 20px; }
-  .totals { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 28px; }
-  .stat { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px 18px; min-width: 180px; }
-  .stat b { display: block; font-size: 30px; font-variant-numeric: tabular-nums; }
-  .stat span { color: var(--muted); font-size: 14px; }
+  .totals { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 8px 16px; margin-bottom: 28px; overflow-x: auto; }
+  .totals table { margin: 0; }
+  .totals th { text-align: left; color: var(--muted); font-weight: 500; font-size: 14px; padding: 6px 8px; }
+  .totals td { border-top: 1px solid var(--line); padding: 8px; color: var(--fg); width: auto; }
+  .totals td.num, .totals th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .totals td.big { font-size: 22px; font-weight: 700; }
+  .totals .file { color: var(--muted); font-size: 13px; }
   .clip { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin-bottom: 18px; }
   .head { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
   .head .n { color: var(--muted); font-variant-numeric: tabular-nums; }
@@ -40,7 +43,7 @@
   .ref { font-weight: 600; }
   .bad { color: var(--err); background: var(--err-bg); border-radius: 4px; padding: 0 3px; }
   .ok { color: var(--ok); font-weight: 600; }
-  @media (max-width: 600px) { td:first-child { width: 80px; } .stat { min-width: 0; flex: 1; } }
+  @media (max-width: 600px) { td:first-child { width: 80px; } }
 </style>
 </head>
 <body>
@@ -167,9 +170,12 @@ function pct1(x) { return (100 * x).toFixed(1).replace(".", ",") + " %"; }
 
 document.getElementById("sub").textContent =
   `${DATA.clips.length} Test-Aufnahmen, die das angepasste Modell nie im Training gehört hat. Rot = falsches Wort.`;
-document.getElementById("totals").innerHTML = DATA.models.map((m, i) =>
-  `<div class="stat"><b>${pct1(DATA.wer[i])}</b><span>Wortfehler · ${esc(m)} (Zeichen ${pct1(DATA.cer[i])})</span></div>`).join("") +
-  `<div class="stat"><b>${DATA.exact[1]}/${DATA.clips.length}</b><span>ganz richtig · ${esc(DATA.models[1])} (vorher ${DATA.exact[0]})</span></div>`;
+document.getElementById("totals").innerHTML = `<table>
+  <tr><th>Modell</th><th class="num">WER</th><th class="num">CER</th><th class="num">ganz richtig</th></tr>
+  ${DATA.models.map((m, i) => `<tr><td>${esc(m)}<div class="file">${esc(DATA.files[i])}</div></td>
+    <td class="num big">${pct1(DATA.wer[i])}</td><td class="num big">${pct1(DATA.cer[i])}</td>
+    <td class="num">${DATA.exact[i]} / ${DATA.clips.length}</td></tr>`).join("")}
+</table>`;
 
 const root = document.getElementById("clips");
 DATA.clips.forEach((c, n) => {
@@ -187,10 +193,16 @@ DATA.clips.forEach((c, n) => {
   const item = { btn: el.querySelector("button"), head: el.querySelector(".playhead") };
   ctx.decodeAudioData(b64ToBuf(c.wav)).then(buffer => {
     item.buffer = buffer;
-    const x = buffer.getChannelData(0);
-    drawWave(el.querySelector(".wave"), x);
-    drawSpec(el.querySelector(".spec"), x, buffer.sampleRate);
     el.querySelector(".dur").textContent = buffer.duration.toFixed(1) + " s";
+    const x = buffer.getChannelData(0), wave = el.querySelector(".wave"), spec = el.querySelector(".spec");
+    let drawnWidth = 0;
+    // Draw once the canvas has a size (it can be 0 before layout), and again when it changes.
+    new ResizeObserver(() => {
+      if (!spec.clientWidth || spec.clientWidth === drawnWidth) return;
+      drawnWidth = spec.clientWidth;
+      drawWave(wave, x);
+      drawSpec(spec, x, buffer.sampleRate);
+    }).observe(spec);
   });
   item.btn.onclick = () => (playing && playing.head === item.head) ? stop() : play(item, 0);
   el.querySelector(".viz").onclick = e => {

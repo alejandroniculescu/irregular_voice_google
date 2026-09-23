@@ -83,7 +83,8 @@ def compare(args: argparse.Namespace) -> None:
         rows.append({"ref": u.text, "wav": base64.b64encode(wav.getvalue()).decode(), "hyps": [
             {"words": _marked(h[i], u.text), "exact": normalize(h[i]) == refs[i],
              "wer": jiwer.wer(refs[i], normalize(h[i]) or "-")} for h in hyps]})
-    data = {"models": ["Whisper", "angepasst"], "clips": rows,
+    data = {"models": ["Whisper (Basis)", "angepasst (LoRA)"], "files": [Path(args.base).name, Path(args.model).name],
+            "clips": rows,
             "wer": [jiwer.wer(refs, [normalize(t) for t in h]) for h in hyps],
             "cer": [jiwer.cer(refs, [normalize(t) for t in h]) for h in hyps],
             "exact": [sum(normalize(t) == r for t, r in zip(h, refs)) for h in hyps]}
@@ -91,8 +92,8 @@ def compare(args: argparse.Namespace) -> None:
     out = Path(args.out) / f"compare-{datetime.now():%Y%m%d-%H%M%S}.html"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(page.replace("/*DATA*/null", json.dumps(data, ensure_ascii=False)), encoding="utf-8")
-    for name, wer, cer in zip(data["models"], data["wer"], data["cer"]):
-        print(f"{name}: WER {wer:.1%}, CER {cer:.1%}")
+    for name, file, wer, cer in zip(data["models"], data["files"], data["wer"], data["cer"]):
+        print(f"{name}: WER {wer:.1%}, CER {cer:.1%}  ({file})")
     print(out)
     subprocess.run(["open", str(out)])
 
