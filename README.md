@@ -105,6 +105,11 @@ transcript should trigger "please repeat", never an action.
 Scoring spells out digits before comparing ("Am 12. Oktober" → "am zwölften
 oktober"), so references may use either digits or words. Ordinals use the
 dative form common in dates; numeric-only dates like "12.10." are not expanded.
+Spellings that sound the same count as equal: ß = ss (Whisper often writes the
+Swiss "Grosses"), and a lone letter is scored as its name ("scharfes ß" and
+"scharfes S" are both "scharfes es"). The train/dev/test split hash uses the
+unfolded text, so no clip changed split. With this, the adapter's test WER is
+13.2% (was 14.9%) and the base model's 55.4% (was 57.9%).
 
 ## Speaker profile and prompts
 
@@ -210,7 +215,7 @@ uv run ivg-demo --compare --snap --model models/ggml/<adapter>-q5_0.bin
 | Split | Adapter WER | + snap WER |
 | --- | --- | --- |
 | dev (35 clips) | 13.9% | 10.9% |
-| test (39 clips) | 14.9% | 12.4% |
+| test (39 clips) | 13.2% | 10.7% |
 
 On test it fixed geklabt, Seben → Sieben and Aushalten → Ausschalten.
 No correct word was changed.

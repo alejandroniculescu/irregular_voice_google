@@ -28,7 +28,7 @@ class Utterance:
 
 
 def assign_split(text: str, test_frac: float = 0.2, dev_frac: float = 0.1) -> str:
-    digest = hashlib.sha256(normalize(text).encode()).digest()
+    digest = hashlib.sha256(normalize(text, fold=False).encode()).digest()
     u = int.from_bytes(digest[:8], "big") / 2**64
     if u < test_frac:
         return "test"
