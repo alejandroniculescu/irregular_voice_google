@@ -1,0 +1,22 @@
+[project]
+name = "irregular-voice-google"
+version = "0.1.0"
+description = "Research project: irregular voice with Google."
+readme = "README.md"
+requires-python = ">=3.13"
+authors = [
+  { name = "Ale" },
+]
+dependencies = []
+
+[dependency-groups]
+dev = [
+  "pytest>=8",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
