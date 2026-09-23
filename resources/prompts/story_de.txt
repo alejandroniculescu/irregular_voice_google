@@ -1,0 +1,57 @@
+# Die große Reise — a first-person story that uses every term in resources/lexicon/.
+# One sentence per line, so ivg-record shows it sentence by sentence:
+#   uv run ivg-record --prompts resources/prompts/story_de.txt
+# Numbers are written as words, the way they are spoken.
+# tests/test_story.py checks that every lexicon term still appears here.
+
+Heute rufe ich im Reisebüro an, denn ich möchte einen Flug buchen.
+Die Frau am Telefon ist freundlich und spricht langsam.
+Sie fragt: Wohin möchten Sie fliegen?
+Ich sage: Von Berlin nach München.
+Sie fragt: Nach Münster?
+Nein, das ist falsch, ich meine München.
+Richtig, sagt sie, also nach München.
+Möchten Sie einfach oder Hin und Rückflug?
+Hin und Rückflug, bitte.
+Der Hinflug soll am Montag sein, am dritten März.
+Der Rückflug soll am Freitag sein, am vierzehnten März.
+Gibt es einen Direktflug, oder muss ich umsteigen?
+Mit Lufthansa gibt es einen Direktflug.
+Der Abflug ist vormittags um neun Uhr.
+Die Ankunft in München ist um zehn Uhr fünfzehn.
+Ich reise nicht allein, wir sind zwei Personen.
+Zwei Erwachsene, keine Kinder.
+Eine Begleitperson kommt mit mir.
+Ich brauche am Flughafen einen Rollstuhl.
+Bitte einen Fensterplatz für mich und einen Gangplatz für meine Begleitperson.
+Economy reicht, Business ist zu teuer.
+Ich habe einen Koffer und etwas Handgepäck.
+Kostet das Gepäck extra?
+Der Preis ist zweihundertvierzig Euro pro Person.
+Ich möchte mit Karte bezahlen.
+Können Sie das bitte wiederholen?
+Sie liest alles noch einmal vor.
+Soll ich die Buchung bestätigen? Ja.
+Ich muss nicht abbrechen und nicht zurück zum Anfang.
+Danach träume ich von vielen Reisen.
+Im Januar fliege ich mit Air France von Stuttgart nach Paris.
+Im Februar fliege ich mit British Airways von Hannover nach London.
+Im April fliege ich mit TUIfly von Leipzig nach Barcelona.
+Im Mai fliege ich mit Discover von Dresden nach New York.
+Im Juni fliege ich mit Eurowings von Hamburg nach Palma auf Mallorca.
+Im Juli fliege ich mit Condor von Frankfurt nach Antalya.
+Im August fliege ich mit Ryanair von Köln nach Rom.
+Im September fliege ich mit Easyjet von Basel nach Lissabon.
+Im Oktober fliege ich mit Austrian von Wien nach Athen.
+Im November fliege ich mit Swiss von Zürich nach Genf.
+Im Dezember fliege ich mit KLM von Düsseldorf nach Amsterdam.
+Ein Freund aus Nürnberg fliegt am Dienstag nach Mailand.
+Eine Freundin aus Bremen fliegt am Mittwoch nach Madrid.
+Ein Nachbar aus Dortmund fliegt am Donnerstag nach Brüssel.
+Eine Kollegin aus Karlsruhe fliegt am Samstag nach Kopenhagen.
+Von Friedrichshafen geht es am Sonntag nach Stockholm und dann nach Oslo.
+Morgen fahre ich mit dem Zug nach Salzburg, Innsbruck und Graz.
+Übermorgen suche ich Flüge nach Prag, Warschau und Budapest.
+Nächste Woche vergleiche ich Flüge nach Istanbul und Dubai.
+Am Wochenende gibt es Flüge nachmittags und abends.
+Jetzt bin ich müde, aber ich freue mich auf die Reise.

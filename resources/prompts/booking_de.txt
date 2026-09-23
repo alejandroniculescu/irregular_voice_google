@@ -1,0 +1,110 @@
+# Prompted recording list for a flight-booking assistant (German).
+# One utterance per line; record each at least twice across different days.
+# Mix: full requests, single slot answers, control words.
+
+Ich möchte einen Flug buchen.
+Ich möchte nach Berlin fliegen.
+Ich möchte von München nach Hamburg fliegen.
+Ich möchte von Frankfurt nach Mallorca fliegen.
+Ich möchte von Düsseldorf nach London fliegen.
+Ich möchte von Stuttgart nach Wien fliegen.
+Ich möchte von Köln nach Zürich fliegen.
+Ich möchte von Hamburg nach Palma fliegen.
+Ich möchte von Berlin nach Paris fliegen.
+Ich möchte von Leipzig nach Antalya fliegen.
+Ich möchte von Hannover nach Rom fliegen.
+Ich möchte von Nürnberg nach Barcelona fliegen.
+Ich möchte von Bremen nach Amsterdam fliegen.
+Ich möchte von Dresden nach Istanbul fliegen.
+Gibt es einen Direktflug nach Lissabon?
+Gibt es einen Direktflug von Berlin nach New York?
+Ich suche einen Flug nach Wien am Wochenende.
+Ich suche den günstigsten Flug nach Madrid.
+Von Frankfurt.
+Von München.
+Von Berlin.
+Von Hamburg.
+Von Düsseldorf.
+Nach Berlin.
+Nach Mallorca.
+Nach London.
+Nach Wien.
+Nach Zürich.
+Nach Antalya.
+Nach Kopenhagen.
+Nach Prag.
+Nach Athen.
+Am Montag.
+Am Dienstag.
+Am Mittwoch.
+Am Donnerstag.
+Am Freitag.
+Am Samstag.
+Am Sonntag.
+Heute.
+Morgen.
+Übermorgen.
+Nächste Woche.
+Am ersten Januar.
+Am dritten März.
+Am zwölften Oktober.
+Am fünfzehnten Mai.
+Am zwanzigsten Juni.
+Am einunddreißigsten Juli.
+Am zweiten August.
+Am vierundzwanzigsten Dezember.
+Am neunten September.
+Am siebzehnten November.
+Hinflug am zehnten April, Rückflug am siebzehnten April.
+Hin und Rückflug, bitte.
+Nur einfach, bitte.
+Nur Hinflug.
+Ich möchte am Vormittag fliegen.
+Ich möchte am Nachmittag fliegen.
+Lieber abends.
+So früh wie möglich.
+Um acht Uhr.
+Um zehn Uhr dreißig.
+Um vierzehn Uhr.
+Nicht vor neun Uhr.
+Eine Person.
+Zwei Personen.
+Zwei Erwachsene und ein Kind.
+Ich reise mit einer Begleitperson.
+Ich brauche Hilfe am Flughafen.
+Ich brauche einen Rollstuhl am Flughafen.
+Ich brauche Unterstützung beim Einsteigen.
+Economy, bitte.
+Business Class, bitte.
+Einen Fensterplatz, bitte.
+Einen Gangplatz, bitte.
+Nur Handgepäck.
+Mit einem Koffer.
+Mit zwei Koffern.
+Mit Lufthansa.
+Mit Eurowings.
+Mit Condor.
+Egal welche Fluggesellschaft.
+Wie viel kostet der Flug?
+Gibt es etwas Günstigeres?
+Wann ist die Ankunft?
+Muss ich umsteigen?
+Ja.
+Nein.
+Ja, das ist richtig.
+Nein, das ist falsch.
+Bitte wiederholen.
+Noch einmal, bitte.
+Zurück.
+Abbrechen.
+Bestätigen.
+Ja, bitte buchen.
+Nein, nicht buchen.
+Das Datum ist falsch.
+Die Stadt ist falsch.
+Ich meinte Hamburg, nicht Homburg.
+Ich meinte München, nicht Münster.
+Ich meinte Wien, nicht Berlin.
+Bitte schicken Sie die Bestätigung per E-Mail.
+Danke.
+Vielen Dank, das war alles.

@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sprachaufnahme</title>
+<style>
+  :root {
+    --bg: #f7f6f2; --fg: #1d1d1b; --muted: #6b6a66; --card: #ffffff; --line: #deddd8;
+    --rec: #c62828; --ok: #2e7d32; --accent: #1f5fa8;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #161615; --fg: #efeee9; --muted: #a09f99; --card: #22221f; --line: #3a3935;
+            --rec: #ef5350; --ok: #66bb6a; --accent: #6ea8ff; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+         font: 18px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 720px; margin: 0 auto; padding: 16px; min-height: 100svh;
+         display: flex; flex-direction: column; gap: 16px; }
+  header { display: flex; justify-content: space-between; align-items: baseline; color: var(--muted); font-size: 15px; }
+  .bar { height: 6px; background: var(--line); border-radius: 3px; overflow: hidden; }
+  .bar > div { height: 100%; background: var(--ok); width: 0; transition: width .3s; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 16px;
+          padding: 28px 20px; flex: 1; display: flex; flex-direction: column; justify-content: center; gap: 12px; }
+  #prompt { font-size: clamp(28px, 7vw, 44px); font-weight: 600; line-height: 1.25; text-align: center; margin: 0; }
+  #takes { text-align: center; color: var(--muted); font-size: 15px; }
+  .meter { height: 10px; background: var(--line); border-radius: 5px; overflow: hidden; }
+  .meter > div { height: 100%; width: 0; background: var(--accent); }
+  #status { text-align: center; min-height: 1.4em; color: var(--muted); }
+  .controls { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  button { font: inherit; font-size: 20px; font-weight: 600; padding: 18px 12px; border-radius: 14px;
+           border: 2px solid var(--line); background: var(--card); color: var(--fg); cursor: pointer; min-height: 64px; }
+  button:disabled { opacity: .35; cursor: default; }
+  #rec { grid-column: 1 / -1; background: var(--rec); border-color: var(--rec); color: #fff; font-size: 24px; min-height: 84px; }
+  #rec.recording { animation: pulse 1.2s infinite; }
+  #save { background: var(--ok); border-color: var(--ok); color: #fff; }
+  @keyframes pulse { 50% { opacity: .7; } }
+  .hint { color: var(--muted); font-size: 14px; text-align: center; }
+  @media (pointer: coarse) { .hint { display: none; } }
+</style>
+</head>
+<body>
+<main>
+  <header><span id="progress">…</span><span id="timer"></span></header>
+  <div class="bar"><div id="bar"></div></div>
+  <section class="card">
+    <p id="prompt">Wird geladen…</p>
+    <div id="takes"></div>
+    <div class="meter"><div id="level"></div></div>
+    <div id="status"></div>
+  </section>
+  <div class="controls">
+    <button id="rec">● Aufnehmen</button>
+    <button id="play" disabled>▶ Anhören</button>
+    <button id="save" disabled>✓ Speichern</button>
+    <button id="redo" disabled>↺ Nochmal</button>
+    <button id="skip">→ Überspringen</button>
+  </div>
+  <p class="hint">Leertaste: Aufnahme starten/stoppen · Enter: speichern · → überspringen</p>
+</main>
+<script>
+const MAX_SECONDS = 30;
+const token = new URLSearchParams(location.search).get("token");
+const api = (path, extra = "") => path + "?" + (token ? "token=" + encodeURIComponent(token) + "&" : "") + extra;
+const $ = (id) => document.getElementById(id);
+
+let state = null, index = 0, skipped = new Set();
+let ctx = null, stream = null, source = null, node = null, chunks = [], recording = false, startedAt = 0, tick = null;
+let takeBlob = null, audio = null;
+
+async function refresh(data) {
+  state = data || await (await fetch(api("/api/state"))).json();
+  const done = state.prompts.filter(p => p.count >= state.target).length;
+  const total = state.prompts.length;
+  $("progress").textContent = `${done} / ${total} Sätze fertig (Ziel: ${state.target}× pro Satz)`;
+  $("bar").style.width = (100 * done / total) + "%";
+  const open = state.prompts.filter(p => p.count < state.target && !skipped.has(p.id));
+  const current = open[0] || state.prompts.find(p => !skipped.has(p.id)) || state.prompts[0];
+  index = state.prompts.indexOf(current);
+  $("prompt").textContent = current.text;
+  $("takes").textContent = `${current.count} Aufnahme${current.count === 1 ? "" : "n"} von diesem Satz`;
+  if (!open.length) setStatus("Alle Sätze sind aufgenommen. Vielen Dank!");
+}
+
+function setStatus(text) { $("status").textContent = text; }
+function setButtons({ rec = true, play = false, save = false, redo = false, skip = true }) {
+  $("rec").disabled = !rec; $("play").disabled = !play; $("save").disabled = !save;
+  $("redo").disabled = !redo; $("skip").disabled = !skip;
+}
+
+async function startRecording() {
+  if (!ctx) {
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: { channelCount: 1, echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+    });
+    ctx = new (window.AudioContext || window.webkitAudioContext)();
+    source = ctx.createMediaStreamSource(stream);
+    node = ctx.createScriptProcessor(4096, 1, 1);
+    const mute = ctx.createGain(); mute.gain.value = 0;
+    source.connect(node); node.connect(mute); mute.connect(ctx.destination);
+    node.onaudioprocess = (e) => {
+      const data = e.inputBuffer.getChannelData(0);
+      let sum = 0; for (let i = 0; i < data.length; i++) sum += data[i] * data[i];
+      $("level").style.width = Math.min(100, Math.sqrt(sum / data.length) * 400) + "%";
+      if (recording) chunks.push(new Float32Array(data));
+    };
+  }
+  await ctx.resume();
+  chunks = []; takeBlob = null; recording = true; startedAt = Date.now();
+  $("rec").textContent = "■ Stopp"; $("rec").classList.add("recording");
+  setButtons({ rec: true, skip: false });
+  setStatus("Aufnahme läuft – bitte den Satz sprechen.");
+  tick = setInterval(() => {
+    const s = (Date.now() - startedAt) / 1000;
+    $("timer").textContent = s.toFixed(1) + " s";
+    if (s >= MAX_SECONDS) stopRecording();
+  }, 100);
+}
+
+function stopRecording() {
+  recording = false; clearInterval(tick);
+  $("rec").textContent = "● Aufnehmen"; $("rec").classList.remove("recording");
+  $("level").style.width = "0";
+  const length = chunks.reduce((n, c) => n + c.length, 0);
+  if (length < ctx.sampleRate * 0.3) {
+    setStatus("Zu kurz – bitte noch einmal.");
+    setButtons({});
+    return;
+  }
+  const samples = new Float32Array(length);
+  let offset = 0; for (const c of chunks) { samples.set(c, offset); offset += c.length; }
+  takeBlob = encodeWav(samples, ctx.sampleRate);
+  setButtons({ rec: false, play: true, save: true, redo: true });
+  setStatus("Anhören, dann speichern oder nochmal aufnehmen.");
+}
+
+function encodeWav(samples, rate) {
+  const buffer = new ArrayBuffer(44 + samples.length * 2), v = new DataView(buffer);
+  const str = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+  str(0, "RIFF"); v.setUint32(4, 36 + samples.length * 2, true); str(8, "WAVE");
+  str(12, "fmt "); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+  str(36, "data"); v.setUint32(40, samples.length * 2, true);
+  for (let i = 0; i < samples.length; i++) {
+    const s = Math.max(-1, Math.min(1, samples[i]));
+    v.setInt16(44 + i * 2, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+  }
+  return new Blob([buffer], { type: "audio/wav" });
+}
+
+async function save() {
+  if (!takeBlob) return;
+  setButtons({ rec: false, skip: false }); setStatus("Wird gespeichert…");
+  const id = state.prompts[index].id;
+  const res = await fetch(api("/api/record", "prompt=" + id), { method: "POST", body: takeBlob });
+  if (!res.ok) { setStatus("Fehler beim Speichern – bitte nochmal."); setButtons({ play: true, save: true, redo: true }); return; }
+  takeBlob = null; $("timer").textContent = "";
+  await refresh(await res.json());
+  setStatus("Gespeichert ✓"); setButtons({});
+}
+
+function redo() { takeBlob = null; $("timer").textContent = ""; setStatus(""); setButtons({}); }
+function play() { if (audio) audio.pause(); audio = new Audio(URL.createObjectURL(takeBlob)); audio.play(); }
+async function skip() { skipped.add(state.prompts[index].id); if (skipped.size >= state.prompts.length) skipped.clear(); redo(); await refresh(state); }
+async function toggle() {
+  try { recording ? stopRecording() : await startRecording(); }
+  catch (e) { setStatus("Kein Mikrofonzugriff: " + e.message); }
+}
+
+$("rec").onclick = toggle; $("save").onclick = save; $("redo").onclick = redo; $("play").onclick = play; $("skip").onclick = skip;
+document.addEventListener("keydown", (e) => {
+  if (e.repeat) return;
+  if (e.code === "Space") { e.preventDefault(); if (!$("rec").disabled) toggle(); }
+  else if (e.code === "Enter" && !$("save").disabled) { e.preventDefault(); save(); }
+  else if (e.code === "ArrowRight" && !$("skip").disabled) skip();
+});
+refresh().catch(() => setStatus("Server nicht erreichbar."));
+</script>
+</body>
+</html>

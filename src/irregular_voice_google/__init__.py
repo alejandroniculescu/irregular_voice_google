@@ -1,2 +1,1 @@
-def hello() -> str:
-    return "Hello from irregular-voice-google!"
+"""Personalised German ASR for a speaker with dysarthria."""

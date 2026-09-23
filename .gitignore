@@ -17,3 +17,8 @@ dist/
 .DS_Store
 .idea/
 .vscode/
+
+# Patient audio, transcripts and model outputs — never commit
+data/
+results/
+models/
