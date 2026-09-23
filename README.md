@@ -154,6 +154,26 @@ Replaying the adapter's test transcripts of the command clips (15, against the
 speaker's 25-command list) gave 12 accepted (all right), 2 confirmed (both
 right) and 1 repeat; nothing wrong was accepted.
 
+## Live demo
+
+```bash
+uv run ivg-demo --list-mics                       # find the headset's device index
+uv run ivg-demo --profile data/speakers/<id>/profile.json \
+  --model models/ggml/<adapter>-q5_0.bin --mic <index> --say
+```
+
+Asks the booking questions (spoken with `--say`), records each answer (Enter to
+start, Enter to stop), transcribes it on the Mac with whisper.cpp and shows
+what `resolve` decides: accept, "Meinten Sie …?" or ask again (three tries).
+It ends by reading back the booking for a yes/no. Takes and a `session.json`
+log go to `data/demo/<timestamp>/` (git-ignored).
+
+Decoding is plain by default. The adapter was trained and scored without a
+prompt or grammar, and with the grammar on it misheard clear answers
+("Von München" → "Zurück", confidence below the threshold); `--prompt` and
+`--grammar` turn them back on. `--wav a.wav b.wav …` replays files instead of
+the microphone, for a dry run.
+
 ## whisper.cpp
 
 The app runtime is [whisper.cpp](https://github.com/ggml-org/whisper.cpp)
@@ -241,6 +261,7 @@ src/irregular_voice_google/
   phonetic.py    # Kölner Phonetik sound codes
   ggml.py        # HF model / LoRA adapter -> whisper.cpp ggml
   cpp.py         # whisper.cpp backend (whisper-cli)
+  demo.py        # live booking demo (mic -> whisper.cpp -> accept/confirm/repeat)
 resources/
   lexicon/       # one <slot>.txt per slot
   questions_de.json  # booking questions: slots and carrier words
