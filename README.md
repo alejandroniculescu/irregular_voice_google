@@ -223,6 +223,26 @@ Some snaps turn one wrong word into another ("Zinge" becomes "Singe" when he
 said "Ziege"). So the snapped text is for display and free text only, never
 for booking values. Booking values go through `questions.resolve`.
 
+#### Experiment: a small local language model (didn't help)
+
+`llmfix.py` lets a local Ollama model propose a corrected sentence for real
+words that make no sense ("Schweich schmeckt seidig"). A changed word is kept
+only if it is a real word, sounds close (Kölner Phonetik code at most 1–2
+edits away) and replaces exactly one heard word:
+
+```bash
+ollama serve & ollama pull qwen2.5:3b
+uv run ivg-eval --model models/ggml/<adapter>-q5_0.bin --split dev --snap --llm qwen2.5:3b ...
+```
+
+With `qwen2.5:3b` on dev, WER went from 10.9% (snap) to 15.3%, and CER from
+3.4% to 5.9%. It made one right fix (sackt → sägt) and broke eight correct
+words (Zaun → Zun, warm → wär, Thymian → Thunfisch, Jara → Joghurt, …).
+Tightening the sound check would not have stopped most of these: the model
+has too little sense of German for sentences that are odd on purpose. It needs
+a stronger model, and a gate that scores candidates instead of trusting a
+rewrite.
+
 ## whisper.cpp
 
 The app runtime is [whisper.cpp](https://github.com/ggml-org/whisper.cpp)
@@ -309,6 +329,7 @@ src/irregular_voice_google/
   questions.py   # per-question prompts, GBNF grammars, answer matching/decisions
   phonetic.py    # Kölner Phonetik sound codes
   snap.py        # non-words -> same-sounding real words (wordfreq)
+  llmfix.py      # experiment: local LLM word fixes, gated by sound
   ggml.py        # HF model / LoRA adapter -> whisper.cpp ggml
   cpp.py         # whisper.cpp backend (whisper-cli)
   demo.py        # live booking demo + base-vs-adapter page (compare.html)

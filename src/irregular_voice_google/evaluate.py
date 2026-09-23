@@ -21,7 +21,7 @@ import jiwer
 import torch
 from transformers import pipeline
 
-from irregular_voice_google import cpp, questions, snap
+from irregular_voice_google import cpp, llmfix, questions, snap
 from irregular_voice_google.guard import guard, max_new_tokens
 from irregular_voice_google.lexicon import keyword_hits, load_lexicon
 from irregular_voice_google.manifest import SPLITS, Utterance, load_manifest
@@ -153,7 +153,11 @@ def main() -> None:
     parser.add_argument("--no-grammar", action="store_true", help="with --question: prompt only, no grammar")
     parser.add_argument("--snap", action="store_true",
                         help="also score each model with non-words snapped to real words (snap.py)")
+    parser.add_argument("--llm", help="with --snap: also score snap + a local Ollama model's sound-gated "
+                        "word fixes (llmfix.py), e.g. qwen2.5:3b")
     args = parser.parse_args()
+    if args.llm and not args.snap:
+        parser.error("--llm needs --snap")
 
     utterances = load_manifest(args.manifest)
     if args.split != "all":
@@ -189,7 +193,10 @@ def main() -> None:
         seconds = round(time.perf_counter() - start, 1)
         variants = [(model, hypotheses)]
         if snapper:
-            variants.append((f"{model} +snap", [snapper.text(h) for h in hypotheses]))
+            snapped = [snapper.text(h) for h in hypotheses]
+            variants.append((f"{model} +snap", snapped))
+            if args.llm:
+                variants.append((f"{model} +snap+llm", [llmfix.fix(h, snapper, args.llm) for h in snapped]))
         for name, hyps in variants:
             summary, rows = score(utterances, hyps, lexicon, flags, min_p)
             summary["prompt_echo"] = round(prompt_echo(utterances, hyps, prompt), 4) if prompt else 0.0
