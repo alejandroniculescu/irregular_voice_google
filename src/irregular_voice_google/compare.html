@@ -163,11 +163,12 @@ function words(ws) {
 }
 function esc(s) { return s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
 function pct(x) { return Math.round(100 * x) + "%"; }
+function pct1(x) { return (100 * x).toFixed(1).replace(".", ",") + " %"; }
 
 document.getElementById("sub").textContent =
   `${DATA.clips.length} Test-Aufnahmen, die das angepasste Modell nie im Training gehört hat. Rot = falsches Wort.`;
 document.getElementById("totals").innerHTML = DATA.models.map((m, i) =>
-  `<div class="stat"><b>${pct(DATA.wer[i])}</b><span>Wortfehlerrate · ${esc(m)}</span></div>`).join("") +
+  `<div class="stat"><b>${pct1(DATA.wer[i])}</b><span>Wortfehler · ${esc(m)} (Zeichen ${pct1(DATA.cer[i])})</span></div>`).join("") +
   `<div class="stat"><b>${DATA.exact[1]}/${DATA.clips.length}</b><span>ganz richtig · ${esc(DATA.models[1])} (vorher ${DATA.exact[0]})</span></div>`;
 
 const root = document.getElementById("clips");

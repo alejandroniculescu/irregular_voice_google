@@ -85,12 +85,15 @@ def compare(args: argparse.Namespace) -> None:
              "wer": jiwer.wer(refs[i], normalize(h[i]) or "-")} for h in hyps]})
     data = {"models": ["Whisper", "angepasst"], "clips": rows,
             "wer": [jiwer.wer(refs, [normalize(t) for t in h]) for h in hyps],
+            "cer": [jiwer.cer(refs, [normalize(t) for t in h]) for h in hyps],
             "exact": [sum(normalize(t) == r for t, r in zip(h, refs)) for h in hyps]}
     page = files("irregular_voice_google").joinpath("compare.html").read_text(encoding="utf-8")
     out = Path(args.out) / f"compare-{datetime.now():%Y%m%d-%H%M%S}.html"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(page.replace("/*DATA*/null", json.dumps(data, ensure_ascii=False)), encoding="utf-8")
-    print(f"Wortfehlerrate: Whisper {data['wer'][0]:.0%}, angepasst {data['wer'][1]:.0%}\n{out}")
+    for name, wer, cer in zip(data["models"], data["wer"], data["cer"]):
+        print(f"{name}: WER {wer:.1%}, CER {cer:.1%}")
+    print(out)
     subprocess.run(["open", str(out)])
 
 
