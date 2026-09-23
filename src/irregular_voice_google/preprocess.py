@@ -18,6 +18,7 @@ import argparse
 import csv
 import json
 import subprocess
+import wave
 from pathlib import Path
 
 import numpy as np
@@ -59,6 +60,10 @@ def variant_name(steps: str) -> str:
 
 def load(path: str | Path, steps: str = "") -> np.ndarray:
     """Decode any audio file to 16 kHz mono float32, applying the preprocessing steps."""
+    if not steps and Path(path).suffix.lower() == ".wav":
+        with wave.open(str(path), "rb") as w:  # processed variants need no ffmpeg (e.g. on a lab GPU box)
+            if (w.getframerate(), w.getnchannels(), w.getsampwidth()) == (SAMPLE_RATE, 1, 2):
+                return np.frombuffer(w.readframes(w.getnframes()), np.int16).astype(np.float32) / 32768
     out = subprocess.run(
         ["ffmpeg", "-nostdin", "-loglevel", "error", "-i", str(path), "-af", ffmpeg_filters(steps),
          "-ac", "1", "-ar", str(SAMPLE_RATE), "-f", "f32le", "-"],

@@ -171,6 +171,28 @@ patient audio). It refuses to run if a train sentence also appears in dev/test,
 and never reads the test split. On a Mac only smoke runs are practical:
 `uv run ivg-train --base openai/whisper-tiny --limit 8 --epochs 2`.
 
+On a 24 GB GPU, `--batch-size 4 --grad-accum 2 --grad-checkpointing` fits in
+about 7 GB (the default batch of 8 without checkpointing runs out of memory).
+Progress is printed every `--log-every` batches with loss and time left, so a
+run can be followed with `tail -f` on its log.
+
+Two ways to stretch a small recording set:
+
+```bash
+uv run ivg-train --augment 0.5                    # speed, muffle, reverb, noise, gain on the fly
+uv run ivg-synth --exclude data/processed/trim/manifest.csv   # macOS: TTS booking answers
+uv run ivg-train --augment 0.5 --extra-manifest data/synthetic/booking/manifest.csv
+```
+
+- `--augment P` applies each augmentation with probability `P` to training
+  batches only (numpy, no ffmpeg needed on the GPU box). Augmented runs need
+  more epochs; use a long `--patience` so a lucky early epoch does not end the run.
+- `ivg-synth` renders the answers to the booking questions (cities, dates,
+  airlines, whole requests) with the German macOS `say` voices, slowed and
+  low-passed, into `data/synthetic/booking/` (git-ignored). Sentences that
+  appear in the patient's dev/test split are skipped, and `ivg-train` checks
+  extra manifests for leaks too; extra data is always training-only.
+
 Patient audio should not go to a cloud GPU unless the consent covers it.
 
 ## Tests
@@ -191,6 +213,8 @@ src/irregular_voice_google/
   recorder.py    # local recording server (+ recorder.html)
   import_samples.py  # import a voice_samples_* export
   train.py       # per-speaker LoRA fine-tune
+  augment.py     # training-time audio augmentation
+  synth.py       # synthetic TTS booking utterances
   preprocess.py  # trim / tempo / EQ variants
   guard.py       # Whisper repetition-loop guard
   profile.py     # per-speaker profile -> Whisper prompt

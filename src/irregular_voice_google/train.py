@@ -21,9 +21,11 @@ from pathlib import Path
 
 import jiwer
 import torch
+import numpy as np
 from peft import LoraConfig, get_peft_model
 from transformers import WhisperForConditionalGeneration, WhisperProcessor, get_linear_schedule_with_warmup
 
+from irregular_voice_google.augment import augment
 from irregular_voice_google.evaluate import pick_device
 from irregular_voice_google.guard import guard, max_new_tokens
 from irregular_voice_google.manifest import Utterance, load_manifest
@@ -48,13 +50,16 @@ class Batcher:
         self.decoder_start_id = decoder_start_id
         self.audio: dict[Path, object] = {}
 
-    def __call__(self, utterances: list[Utterance]) -> dict[str, torch.Tensor]:
+    def __call__(self, utterances: list[Utterance], rng: np.random.Generator | None = None,
+                 p: float = 0.0) -> dict[str, torch.Tensor]:
+        """With ``rng``, each clip is augmented with probability ``p`` per effect (training only)."""
         for u in utterances:
             if u.audio not in self.audio:
                 self.audio[u.audio] = load(u.audio)
-        features = self.processor.feature_extractor(
-            [self.audio[u.audio] for u in utterances], sampling_rate=SAMPLE_RATE, return_tensors="pt"
-        ).input_features
+        audio = [self.audio[u.audio] for u in utterances]
+        if rng is not None:
+            audio = [augment(a, rng, p) for a in audio]
+        features = self.processor.feature_extractor(audio, sampling_rate=SAMPLE_RATE, return_tensors="pt").input_features
         ids = [self.processor.tokenizer(u.text).input_ids for u in utterances]
         # The model prepends the decoder start token itself when shifting labels.
         ids = [i[1:] if i and i[0] == self.decoder_start_id else i for i in ids]
@@ -85,6 +90,10 @@ def dev_wer(model, processor, batcher, utterances, device, autocast, batch_size)
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--manifest", default="data/manifest.csv")
+    parser.add_argument("--extra-manifest", action="append", default=[],
+                        help="Extra training-only data (e.g. ivg-synth output); repeatable. Its splits are ignored.")
+    parser.add_argument("--augment", type=float, default=0.0,
+                        help="Probability of each training-time augmentation (0 = off; try 0.5).")
     parser.add_argument("--base", default="primeline/whisper-large-v3-turbo-german")
     parser.add_argument("--out", help="Adapter directory (default: models/<base>-lora-<timestamp>).")
     parser.add_argument("--epochs", type=int, default=10)
@@ -95,6 +104,8 @@ def main() -> None:
     parser.add_argument("--patience", type=int, default=3, help="Stop after N epochs without dev improvement.")
     parser.add_argument("--limit", type=int, help="Only the first N train/dev utterances (smoke tests).")
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--log-every", type=int, default=10, help="Print loss and ETA every N batches.")
+    parser.add_argument("--grad-checkpointing", action="store_true", help="Trade compute for GPU memory.")
     args = parser.parse_args()
 
     random.seed(args.seed)
@@ -102,8 +113,10 @@ def main() -> None:
     utterances = load_manifest(args.manifest)
     train = [u for u in utterances if u.split == "train"]
     dev = [u for u in utterances if u.split == "dev"]
-    check_no_leak(train, [u for u in utterances if u.split != "train"])
     train, dev = train[: args.limit], dev[: args.limit]
+    extra = [u for m in args.extra_manifest for u in load_manifest(m)]
+    check_no_leak(train + extra, [u for u in utterances if u.split != "train"])
+    train += extra
     if not train or not dev:
         raise SystemExit("need utterances in both the train and dev splits")
 
@@ -119,6 +132,9 @@ def main() -> None:
         apply_spec_augment=True, mask_time_prob=0.05, mask_feature_prob=0.05,
     )
     model.generation_config.forced_decoder_ids = None
+    if args.grad_checkpointing:
+        model.config.use_cache = False
+        model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
     model = get_peft_model(model, LoraConfig(
         r=args.rank, lora_alpha=2 * args.rank, lora_dropout=0.05, target_modules=LORA_TARGETS, bias="none",
     ))
@@ -133,14 +149,16 @@ def main() -> None:
 
     out = Path(args.out or f"models/{args.base.split('/')[-1]}-lora-{datetime.now():%Y%m%d-%H%M%S}")
     base_wer, _ = dev_wer(model, processor, batcher, dev, device, autocast, args.batch_size)
-    print(f"dev WER before training: {base_wer:.1%} ({len(train)} train / {len(dev)} dev, {device})", flush=True)
+    print(f"dev WER before training: {base_wer:.1%} ({len(train)} train incl. {len(extra)} extra / {len(dev)} dev, "
+          f"{device})", flush=True)
+    aug_rng = np.random.default_rng(args.seed) if args.augment > 0 else None
     history, best, stale = [{"epoch": 0, "dev_wer": round(base_wer, 4)}], base_wer, 0
 
     for epoch in range(1, args.epochs + 1):
         start, losses = time.perf_counter(), []
         order = random.sample(train, len(train))
         for step, i in enumerate(range(0, len(order), args.batch_size), 1):
-            batch = {k: v.to(device) for k, v in batcher(order[i : i + args.batch_size]).items()}
+            batch = {k: v.to(device) for k, v in batcher(order[i : i + args.batch_size], aug_rng, args.augment).items()}
             with autocast():
                 loss = model(**batch).loss / args.grad_accum
             loss.backward()
@@ -150,6 +168,11 @@ def main() -> None:
                 optimizer.step()
                 scheduler.step()
                 optimizer.zero_grad()
+            n_steps = -(-len(order) // args.batch_size)
+            if step % args.log_every == 0 or step == n_steps:
+                elapsed = time.perf_counter() - start
+                print(f"  epoch {epoch} step {step}/{n_steps}  loss {sum(losses[-args.log_every:]) / len(losses[-args.log_every:]):.3f}"
+                      f"  {step / elapsed:.1f} it/s  ~{(n_steps - step) * elapsed / step:.0f}s left in epoch", flush=True)
 
         wer, hyps = dev_wer(model, processor, batcher, dev, device, autocast, args.batch_size)
         history.append({"epoch": epoch, "loss": round(sum(losses) / len(losses), 4), "dev_wer": round(wer, 4)})
@@ -165,7 +188,7 @@ def main() -> None:
                 print(f"no dev improvement for {args.patience} epochs, stopping")
                 break
 
-    info = {"base": args.base, "manifest": args.manifest, "n_train": len(train), "n_dev": len(dev),
+    info = {"base": args.base, "manifest": args.manifest, "n_train": len(train), "n_extra": len(extra), "n_dev": len(dev),
             "args": vars(args), "best_dev_wer": round(best, 4), "history": history}
     if best < base_wer:
         (out / "train_info.json").write_text(json.dumps(info, indent=2, ensure_ascii=False), encoding="utf-8")
