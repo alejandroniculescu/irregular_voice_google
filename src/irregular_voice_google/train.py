@@ -23,13 +23,13 @@ import jiwer
 import torch
 from peft import LoraConfig, get_peft_model
 from transformers import WhisperForConditionalGeneration, WhisperProcessor, get_linear_schedule_with_warmup
-from transformers.pipelines.audio_utils import ffmpeg_read
 
 from irregular_voice_google.evaluate import pick_device
+from irregular_voice_google.guard import guard, max_new_tokens
 from irregular_voice_google.manifest import Utterance, load_manifest
+from irregular_voice_google.preprocess import SAMPLE_RATE, load
 from irregular_voice_google.text import normalize
 
-SAMPLE_RATE = 16_000
 LORA_TARGETS = ["q_proj", "k_proj", "v_proj", "out_proj", "fc1", "fc2"]
 
 
@@ -38,10 +38,6 @@ def check_no_leak(train: list[Utterance], held_out: list[Utterance]) -> None:
     overlap = {normalize(u.text) for u in train} & {normalize(u.text) for u in held_out}
     if overlap:
         raise SystemExit(f"{len(overlap)} transcripts are in both train and dev/test, e.g. {sorted(overlap)[:3]}")
-
-
-def load_audio(path: Path):
-    return ffmpeg_read(path.read_bytes(), SAMPLE_RATE)
 
 
 class Batcher:
@@ -55,7 +51,7 @@ class Batcher:
     def __call__(self, utterances: list[Utterance]) -> dict[str, torch.Tensor]:
         for u in utterances:
             if u.audio not in self.audio:
-                self.audio[u.audio] = load_audio(u.audio)
+                self.audio[u.audio] = load(u.audio)
         features = self.processor.feature_extractor(
             [self.audio[u.audio] for u in utterances], sampling_rate=SAMPLE_RATE, return_tensors="pt"
         ).input_features
@@ -76,8 +72,11 @@ def dev_wer(model, processor, batcher, utterances, device, autocast, batch_size)
         for start in range(0, len(utterances), batch_size):
             chunk = utterances[start : start + batch_size]
             features = batcher(chunk)["input_features"].to(device)
-            out = model.generate(input_features=features, language="german", task="transcribe")
-            hyps += processor.batch_decode(out, skip_special_tokens=True)
+            seconds = [len(batcher.audio[u.audio]) / SAMPLE_RATE for u in chunk]
+            out = model.generate(input_features=features, language="german", task="transcribe",
+                                 max_new_tokens=max_new_tokens(max(seconds)))
+            texts = processor.batch_decode(out, skip_special_tokens=True)
+            hyps += [guard(t, s)[0] for t, s in zip(texts, seconds)]
     model.train()
     refs = [normalize(u.text) for u in utterances]
     return jiwer.wer(refs, [normalize(h) for h in hyps]), hyps

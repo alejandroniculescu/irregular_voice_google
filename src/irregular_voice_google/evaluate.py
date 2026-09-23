@@ -18,8 +18,10 @@ import jiwer
 import torch
 from transformers import pipeline
 
+from irregular_voice_google.guard import guard, max_new_tokens
 from irregular_voice_google.lexicon import keyword_hits, load_lexicon
 from irregular_voice_google.manifest import SPLITS, Utterance, load_manifest
+from irregular_voice_google.preprocess import SAMPLE_RATE, load
 from irregular_voice_google.text import normalize
 
 DEFAULT_MODELS = (
@@ -50,15 +52,20 @@ def load_asr(model: str, device: str, dtype: torch.dtype):
                     feature_extractor=processor.feature_extractor, device=device, dtype=dtype)
 
 
-def transcribe(model: str, utterances: list[Utterance], device: str, dtype: torch.dtype) -> list[str]:
+def transcribe(model: str, utterances: list[Utterance], device: str, dtype: torch.dtype) -> tuple[list[str], list[str | None]]:
+    """Guarded hypotheses plus, per utterance, why the loop guard fired (or None)."""
     asr = load_asr(model, device, dtype)
-    generate_kwargs = {"language": "german", "task": "transcribe"}
-    hypotheses = []
+    hypotheses, flags = [], []
     try:
         for i, utt in enumerate(utterances, 1):
-            out = asr(str(utt.audio), generate_kwargs=generate_kwargs, return_timestamps=False)
-            hypotheses.append(out["text"].strip())
-            print(f"  [{i}/{len(utterances)}] {hypotheses[-1]}")
+            audio = load(utt.audio)
+            seconds = len(audio) / SAMPLE_RATE
+            generate_kwargs = {"language": "german", "task": "transcribe", "max_new_tokens": max_new_tokens(seconds)}
+            out = asr({"raw": audio, "sampling_rate": SAMPLE_RATE}, generate_kwargs=generate_kwargs, return_timestamps=False)
+            text, flag = guard(out["text"].strip(), seconds)
+            hypotheses.append(text)
+            flags.append(flag)
+            print(f"  [{i}/{len(utterances)}] {text}" + (f"  [guard: {flag}]" if flag else ""))
     finally:
         del asr
         gc.collect()
@@ -66,25 +73,29 @@ def transcribe(model: str, utterances: list[Utterance], device: str, dtype: torc
             torch.mps.empty_cache()
         elif device == "cuda":
             torch.cuda.empty_cache()
-    return hypotheses
+    return hypotheses, flags
 
 
-def score(utterances: list[Utterance], hypotheses: list[str], lexicon: dict[str, list[str]]) -> tuple[dict, list[dict]]:
+def score(utterances: list[Utterance], hypotheses: list[str], lexicon: dict[str, list[str]],
+          flags: list[str | None] | None = None) -> tuple[dict, list[dict]]:
     refs = [normalize(u.text) for u in utterances]
     hyps = [normalize(h) for h in hypotheses]
     rows = []
-    for utt, ref, hyp, raw in zip(utterances, refs, hyps, hypotheses):
+    flags = flags or [None] * len(utterances)
+    for utt, ref, hyp, raw, flag in zip(utterances, refs, hyps, hypotheses, flags):
         rows.append({
             "audio": str(utt.audio),
             "reference": utt.text,
             "hypothesis": raw,
             "wer": round(jiwer.wer(ref, hyp), 4) if ref else "",
+            "guard": flag or "",
         })
 
     summary = {
         "n": len(utterances),
         "wer": round(jiwer.wer(refs, hyps), 4),
         "cer": round(jiwer.cer(refs, hyps), 4),
+        "guard_flags": sum(f is not None for f in flags),
         "keyword_recall": {},
     }
     for slot, terms in lexicon.items():
@@ -123,8 +134,8 @@ def main() -> None:
     for model in args.model or DEFAULT_MODELS:
         print(f"\n== {model} on {len(utterances)} {args.split} utterances ({device})")
         start = time.perf_counter()
-        hypotheses = transcribe(model, utterances, device, dtype)
-        summary, rows = score(utterances, hypotheses, lexicon)
+        hypotheses, flags = transcribe(model, utterances, device, dtype)
+        summary, rows = score(utterances, hypotheses, lexicon, flags)
         summary["seconds"] = round(time.perf_counter() - start, 1)
         summaries[model] = summary
 
@@ -136,8 +147,8 @@ def main() -> None:
     run = {"manifest": args.manifest, "split": args.split, "device": device, "models": summaries}
     (out_dir / "summary.json").write_text(json.dumps(run, indent=2, ensure_ascii=False), encoding="utf-8")
 
-    print(f"\n{'model':<45} {'WER':>6} {'CER':>6}  keyword recall")
+    print(f"\n{'model':<45} {'WER':>6} {'CER':>6} {'loops':>5}  keyword recall")
     for model, s in summaries.items():
         kw = ", ".join(f"{k} {v['recall']:.0%}" for k, v in s["keyword_recall"].items())
-        print(f"{model:<45} {s['wer']:>6.1%} {s['cer']:>6.1%}  {kw}")
+        print(f"{model:<45} {s['wer']:>6.1%} {s['cer']:>6.1%} {s['guard_flags']:>5}  {kw}")
     print(f"\nresults: {out_dir}")

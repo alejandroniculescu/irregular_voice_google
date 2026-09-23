@@ -71,6 +71,19 @@ Copies the audio under `data/raw/<export>/` and writes `data/manifest.csv` from
 the export's phrase manifest (its splits are kept, `test_adapt` → `test`) and
 the reviewed command/number segments (transcript-hash split).
 
+### Preprocessing variants
+
+```bash
+uv run ivg-preprocess --steps trim                 # -> data/processed/trim/manifest.csv
+uv run ivg-preprocess --steps trim,tempo=1.2,eq=6  # -> data/processed/trim_tempo1.2_eq6/
+```
+
+Steps (applied in order with ffmpeg): `trim` cuts leading/trailing silence,
+`tempo=<x>` speeds up without changing pitch, `eq=<dB>` boosts 2–5 kHz. Texts
+and splits are copied unchanged, so pass the variant's manifest to `ivg-eval`
+or `ivg-train`. Whatever variant is used for training must also be applied to
+live audio (`preprocess.load`).
+
 ## Baseline evaluation
 
 ```bash
@@ -82,6 +95,12 @@ Defaults to `primeline/whisper-large-v3-turbo-german` and
 others. Reports WER, CER and keyword recall per slot using the lexicons in
 `resources/lexicon/` (cities, dates, airlines, booking words). Per-utterance
 outputs go to `results/<timestamp>/`.
+
+Whisper occasionally gets stuck repeating a word. A loop guard (`guard.py`)
+caps generation length by clip duration and collapses runaway repeats; flagged
+utterances are counted in the `loops` column and marked in the per-utterance
+CSV. Training uses the same guard when scoring dev. In the app, a flagged
+transcript should trigger "please repeat", never an action.
 
 Scoring spells out digits before comparing ("Am 12. Oktober" → "am zwölften
 oktober"), so references may use either digits or words. Ordinals use the
@@ -121,6 +140,8 @@ src/irregular_voice_google/
   recorder.py    # local recording server (+ recorder.html)
   import_samples.py  # import a voice_samples_* export
   train.py       # per-speaker LoRA fine-tune
+  preprocess.py  # trim / tempo / EQ variants
+  guard.py       # Whisper repetition-loop guard
 resources/
   lexicon/       # one <slot>.txt per slot
   prompts/       # German recording prompts + lexicon story
