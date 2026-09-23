@@ -70,7 +70,8 @@ class Batcher:
         return {"input_features": features, "labels": labels}
 
 
-def dev_wer(model, processor, batcher, utterances, device, autocast, batch_size) -> tuple[float, list[str]]:
+def score(model, processor, batcher, utterances, device, autocast, batch_size) -> tuple[float, float, list[str]]:
+    """WER, CER and hypotheses on unaugmented audio."""
     model.eval()
     hyps = []
     with torch.no_grad(), autocast():
@@ -83,8 +84,8 @@ def dev_wer(model, processor, batcher, utterances, device, autocast, batch_size)
             texts = processor.batch_decode(out, skip_special_tokens=True)
             hyps += [guard(t, s)[0] for t, s in zip(texts, seconds)]
     model.train()
-    refs = [normalize(u.text) for u in utterances]
-    return jiwer.wer(refs, [normalize(h) for h in hyps]), hyps
+    refs, norm = [normalize(u.text) for u in utterances], [normalize(h) for h in hyps]
+    return jiwer.wer(refs, norm), jiwer.cer(refs, norm), hyps
 
 
 def main() -> None:
@@ -116,6 +117,8 @@ def main() -> None:
     train, dev = train[: args.limit], dev[: args.limit]
     extra = [u for m in args.extra_manifest for u in load_manifest(m)]
     check_no_leak(train + extra, [u for u in utterances if u.split != "train"])
+    # A fixed sample of his own train clips, scored like dev: train WER far below dev WER means overfitting.
+    train_probe = random.Random(args.seed).sample(train, min(len(train), len(dev)))
     train += extra
     if not train or not dev:
         raise SystemExit("need utterances in both the train and dev splits")
@@ -148,11 +151,11 @@ def main() -> None:
                                                 steps_per_epoch * args.epochs)
 
     out = Path(args.out or f"models/{args.base.split('/')[-1]}-lora-{datetime.now():%Y%m%d-%H%M%S}")
-    base_wer, _ = dev_wer(model, processor, batcher, dev, device, autocast, args.batch_size)
-    print(f"dev WER before training: {base_wer:.1%} ({len(train)} train incl. {len(extra)} extra / {len(dev)} dev, "
+    base_wer, base_cer, _ = score(model, processor, batcher, dev, device, autocast, args.batch_size)
+    print(f"dev WER before training: {base_wer:.1%}, CER {base_cer:.1%} ({len(train)} train incl. {len(extra)} extra / {len(dev)} dev, "
           f"{device})", flush=True)
     aug_rng = np.random.default_rng(args.seed) if args.augment > 0 else None
-    history, best, stale = [{"epoch": 0, "dev_wer": round(base_wer, 4)}], base_wer, 0
+    history, best, stale = [{"epoch": 0, "dev_wer": round(base_wer, 4), "dev_cer": round(base_cer, 4)}], base_wer, 0
 
     for epoch in range(1, args.epochs + 1):
         start, losses = time.perf_counter(), []
@@ -174,9 +177,12 @@ def main() -> None:
                 print(f"  epoch {epoch} step {step}/{n_steps}  loss {sum(losses[-args.log_every:]) / len(losses[-args.log_every:]):.3f}"
                       f"  {step / elapsed:.1f} it/s  ~{(n_steps - step) * elapsed / step:.0f}s left in epoch", flush=True)
 
-        wer, hyps = dev_wer(model, processor, batcher, dev, device, autocast, args.batch_size)
-        history.append({"epoch": epoch, "loss": round(sum(losses) / len(losses), 4), "dev_wer": round(wer, 4)})
-        print(f"epoch {epoch}: loss {history[-1]['loss']:.3f}  dev WER {wer:.1%}  "
+        wer, cer, hyps = score(model, processor, batcher, dev, device, autocast, args.batch_size)
+        train_wer, _, _ = score(model, processor, batcher, train_probe, device, autocast, args.batch_size)
+        history.append({"epoch": epoch, "loss": round(sum(losses) / len(losses), 4), "dev_wer": round(wer, 4),
+                        "dev_cer": round(cer, 4), "train_wer": round(train_wer, 4)})
+        print(f"epoch {epoch}: loss {history[-1]['loss']:.3f}  dev WER {wer:.1%}  CER {cer:.1%}  "
+              f"train WER {train_wer:.1%}  "
               f"({time.perf_counter() - start:.0f}s)  e.g. {dev[0].text!r} -> {hyps[0]!r}", flush=True)
         if wer < best:
             best, stale = wer, 0

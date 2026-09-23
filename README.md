@@ -174,7 +174,10 @@ and never reads the test split. On a Mac only smoke runs are practical:
 On a 24 GB GPU, `--batch-size 4 --grad-accum 2 --grad-checkpointing` fits in
 about 7 GB (the default batch of 8 without checkpointing runs out of memory).
 Progress is printed every `--log-every` batches with loss and time left, so a
-run can be followed with `tail -f` on its log.
+run can be followed with `tail -f` on its log. Each epoch also reports dev CER
+and the WER on a fixed sample of the speaker's own train clips (unaugmented,
+same size as dev); a train WER far below dev WER means the adapter is
+memorising the recordings.
 
 Two ways to stretch a small recording set:
 
