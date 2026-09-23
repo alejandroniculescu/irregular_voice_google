@@ -185,6 +185,32 @@ muffling) and playback, the two transcripts with wrong words marked, and the
 overall WER. The page embeds the audio, so it is written to `data/demo/` and
 must stay there.
 
+### Snapping non-words to real words
+
+The adapter often hears the right sounds but writes a non-word: "geklabt" for
+"geklappt". `snap.py` replaces any word that the German frequency list
+([wordfreq](https://pypi.org/project/wordfreq/)) has never seen, and that is
+not in the speaker's train transcripts or the lexicons, with a real word that
+has the same Kölner Phonetik code and is at most one or two edits away.
+Voicing swaps (b/p, d/t, g/k), doubled consonants and h count as half an edit.
+Among equally close words, the more frequent one wins. Rare real words
+("pufft") are left alone.
+
+```bash
+uv run ivg-eval --model models/ggml/<adapter>-q5_0.bin --split test --snap ...
+uv run ivg-demo --compare --snap --model models/ggml/<adapter>-q5_0.bin
+```
+
+| Split | Adapter WER | + snap WER |
+| --- | --- | --- |
+| dev (35 clips) | 13.9% | 10.9% |
+| test (39 clips) | 14.9% | 14.1% |
+
+CER is unchanged: the fixes are single letters. No correct word was changed.
+Some snaps turn one wrong word into another ("Zinge" becomes "Singe" when he
+said "Ziege"). So the snapped text is for display and free text only, never
+for booking values. Booking values go through `questions.resolve`.
+
 ## whisper.cpp
 
 The app runtime is [whisper.cpp](https://github.com/ggml-org/whisper.cpp)
@@ -270,6 +296,7 @@ src/irregular_voice_google/
   profile.py     # per-speaker profile -> Whisper prompt
   questions.py   # per-question prompts, GBNF grammars, answer matching/decisions
   phonetic.py    # Kölner Phonetik sound codes
+  snap.py        # non-words -> same-sounding real words (wordfreq)
   ggml.py        # HF model / LoRA adapter -> whisper.cpp ggml
   cpp.py         # whisper.cpp backend (whisper-cli)
   demo.py        # live booking demo + base-vs-adapter page (compare.html)

@@ -12,6 +12,7 @@ dependencies = [
   "peft>=0.13",
   "torch>=2.4",
   "transformers>=4.45",
+  "wordfreq>=3.1.1",
 ]
 
 [project.scripts]

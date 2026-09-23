@@ -35,7 +35,7 @@ from datetime import datetime
 from importlib.resources import files
 from pathlib import Path
 
-from irregular_voice_google import cpp, questions
+from irregular_voice_google import cpp, questions, snap
 import jiwer
 
 from irregular_voice_google.guard import guard
@@ -75,6 +75,12 @@ def compare(args: argparse.Namespace) -> None:
     clips = random.Random(args.seed).sample(clips, min(args.n, len(clips))) if args.n else clips
     print(f"Transkribiere {len(clips)} Test-Aufnahmen mit beiden Modellen …")
     hyps = [cpp.transcribe(model, clips)[0] for model in (args.base, args.model)]
+    names, model_files = ["Whisper (Basis)", "angepasst (LoRA)"], [Path(args.base).name, Path(args.model).name]
+    if args.snap:  # adapter output with non-words snapped to real words
+        snapper = snap.for_speaker(args.manifest)
+        hyps.append([snapper.text(h) for h in hyps[1]])
+        names.append("angepasst + Wortkorrektur")
+        model_files.append(Path(args.model).name + " + snap.py")
     refs = [normalize(u.text) for u in clips]
     rows = []
     for i, u in enumerate(clips):
@@ -83,8 +89,7 @@ def compare(args: argparse.Namespace) -> None:
         rows.append({"ref": u.text, "wav": base64.b64encode(wav.getvalue()).decode(), "hyps": [
             {"words": _marked(h[i], u.text), "exact": normalize(h[i]) == refs[i],
              "wer": jiwer.wer(refs[i], normalize(h[i]) or "-")} for h in hyps]})
-    data = {"models": ["Whisper (Basis)", "angepasst (LoRA)"], "files": [Path(args.base).name, Path(args.model).name],
-            "clips": rows,
+    data = {"models": names, "files": model_files, "clips": rows,
             "wer": [jiwer.wer(refs, [normalize(t) for t in h]) for h in hyps],
             "cer": [jiwer.cer(refs, [normalize(t) for t in h]) for h in hyps],
             "exact": [sum(normalize(t) == r for t, r in zip(h, refs)) for h in hyps]}
@@ -191,6 +196,7 @@ def main() -> None:
                         help="model to compare against (the adapter's base)")
     parser.add_argument("--manifest", default="data/processed/trim/manifest.csv", help="clips for --compare")
     parser.add_argument("--n", type=int, help="--compare only N random test clips")
+    parser.add_argument("--snap", action="store_true", help="--compare: add the adapter with non-words snapped")
     parser.add_argument("--seed", type=int, default=0)
     args = parser.parse_args()
     if args.list_mics:

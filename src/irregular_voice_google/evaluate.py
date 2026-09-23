@@ -21,7 +21,7 @@ import jiwer
 import torch
 from transformers import pipeline
 
-from irregular_voice_google import cpp, questions
+from irregular_voice_google import cpp, questions, snap
 from irregular_voice_google.guard import guard, max_new_tokens
 from irregular_voice_google.lexicon import keyword_hits, load_lexicon
 from irregular_voice_google.manifest import SPLITS, Utterance, load_manifest
@@ -151,6 +151,8 @@ def main() -> None:
     parser.add_argument("--question", help="booking question from resources/questions_de.json (e.g. destination); "
                         "replaces --prompt-parts with that question's prompt, plus its grammar on whisper.cpp")
     parser.add_argument("--no-grammar", action="store_true", help="with --question: prompt only, no grammar")
+    parser.add_argument("--snap", action="store_true",
+                        help="also score each model with non-words snapped to real words (snap.py)")
     args = parser.parse_args()
 
     utterances = load_manifest(args.manifest)
@@ -171,6 +173,7 @@ def main() -> None:
         check_prompt_not_in(prompt, utterances)
         print(f"prompt ({len(prompt.split())} words): {prompt[:160]}{'…' if len(prompt) > 160 else ''}")
     lexicon = load_lexicon(args.lexicon) if Path(args.lexicon).is_dir() else {}
+    snapper = snap.for_speaker(args.manifest, args.lexicon) if args.snap else None
     device, dtype = pick_device()
     out_dir = Path(args.out) / datetime.now().strftime("%Y%m%d-%H%M%S")
     out_dir.mkdir(parents=True)
@@ -183,15 +186,21 @@ def main() -> None:
             hypotheses, flags, min_p = cpp.transcribe(model, utterances, prompt, grammar)
         else:
             hypotheses, flags, min_p = *transcribe(model, utterances, device, dtype, prompt), None
-        summary, rows = score(utterances, hypotheses, lexicon, flags, min_p)
-        summary["prompt_echo"] = round(prompt_echo(utterances, hypotheses, prompt), 4) if prompt else 0.0
-        summary["seconds"] = round(time.perf_counter() - start, 1)
-        summaries[model] = summary
+        seconds = round(time.perf_counter() - start, 1)
+        variants = [(model, hypotheses)]
+        if snapper:
+            variants.append((f"{model} +snap", [snapper.text(h) for h in hypotheses]))
+        for name, hyps in variants:
+            summary, rows = score(utterances, hyps, lexicon, flags, min_p)
+            summary["prompt_echo"] = round(prompt_echo(utterances, hyps, prompt), 4) if prompt else 0.0
+            summary["seconds"] = seconds
+            summaries[name] = summary
 
-        with (out_dir / f"{model.strip('/').replace('/', '__')}.csv").open("w", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=list(rows[0]))
-            writer.writeheader()
-            writer.writerows(rows)
+            with (out_dir / f"{name.strip('/').replace('/', '__').replace(' +', '+')}.csv").open(
+                    "w", newline="", encoding="utf-8") as f:
+                writer = csv.DictWriter(f, fieldnames=list(rows[0]))
+                writer.writeheader()
+                writer.writerows(rows)
 
     run = {"manifest": args.manifest, "split": args.split, "device": device, "profile": args.profile,
            "prompt_parts": args.prompt_parts if prompt and not question else "none", "question": args.question,
