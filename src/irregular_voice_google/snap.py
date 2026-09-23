@@ -13,6 +13,12 @@ to "geklappt", and "geklappt" is more common). Rare real words
 never touched, so a real-word slip ("Aushalten" for "Ausschalten") stays; that
 is what the per-question value lists and ``questions.resolve`` are for.
 
+Real words get one exception: short answers to a command prompt. With a
+``commands`` list, an utterance that is not a command but has exactly one
+command's sound code and word count becomes that command ("Aushalten" ->
+"Ausschalten", both 08526). The app knows it asked for a command, the same
+knowledge ``questions.resolve`` uses.
+
 A snapped word can still be wrong ("Zinge" -> "Zunge" for "Ziege"): it trades
 an obvious non-word for a plausible word, so snapped text is for display and
 free text, not for booking values.
@@ -61,8 +67,15 @@ def edits(a: str, b: str) -> float:
 
 
 class Snapper:
-    def __init__(self, vocabulary: Iterable[str] = (), min_zipf: float = MIN_ZIPF, n: int = 300_000):
-        """``vocabulary``: texts whose words always count as real (speaker's train transcripts, lexicons)."""
+    def __init__(self, vocabulary: Iterable[str] = (), min_zipf: float = MIN_ZIPF, n: int = 300_000,
+                 commands: Iterable[str] = ()):
+        """``vocabulary``: texts whose words always count as real (speaker's train transcripts, lexicons).
+        ``commands``: short phrases a sound-alike answer is snapped to as a whole."""
+        by_command: dict[str, list[str]] = {}
+        for c in commands:
+            by_command.setdefault(phonetic.code(c), []).append(c)
+        self.commands = {c.lower() for c in commands}
+        self.by_command = {k: v[0] for k, v in by_command.items() if len(v) == 1}  # ambiguous codes: never snap
         self.min_zipf = min_zipf
         self.vocabulary = {w.lower() for text in vocabulary for w in WORD.findall(text)}
         self.freq: dict[str, float] = {}
@@ -92,11 +105,26 @@ class Snapper:
         best = min(scored)[2]
         return best[:1].upper() + best[1:] if word[:1].isupper() else best
 
+    def command(self, text: str) -> str | None:
+        """The command ``text`` sounds exactly like, if it is not already one."""
+        words = WORD.findall(text)
+        if not words or " ".join(words).lower() in self.commands:
+            return None
+        c = self.by_command.get(phonetic.code(text))
+        return c if c and len(c.split()) == len(words) else None
+
     def text(self, text: str) -> str:
+        if c := self.command(text):
+            return c + text[len(text.rstrip(".!?")):]  # keep the final punctuation
         return WORD.sub(lambda m: self.word(m[0]), text)
 
 
-def for_speaker(manifest: str | Path, lexicon: str | Path = "resources/lexicon") -> Snapper:
-    """Snapper that also knows the speaker's train transcripts and the slot lexicons (never dev/test)."""
+def for_speaker(manifest: str | Path, lexicon: str | Path = "resources/lexicon",
+                commands: str | Path = "resources/commands_de.txt") -> Snapper:
+    """Snapper that also knows the speaker's train transcripts, the slot lexicons and the app's commands
+    (never dev/test transcripts)."""
     texts = [u.text for u in load_manifest(manifest) if u.split == "train"]
-    return Snapper(texts + [p.read_text(encoding="utf-8") for p in sorted(Path(lexicon).glob("*.txt"))])
+    lines = [line.strip() for line in Path(commands).read_text(encoding="utf-8").splitlines()]
+    cmds = [line for line in lines if line and not line.startswith("#")]
+    return Snapper(texts + cmds + [p.read_text(encoding="utf-8") for p in sorted(Path(lexicon).glob("*.txt"))],
+                   commands=cmds)

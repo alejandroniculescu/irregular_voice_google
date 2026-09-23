@@ -196,6 +196,12 @@ Voicing swaps (b/p, d/t, g/k), doubled consonants and h count as half an edit.
 Among equally close words, the more frequent one wins. Rare real words
 ("pufft") are left alone.
 
+Real words that are wrong ("Aushalten" for "Ausschalten") are only fixed for
+short answers to a command prompt. `resources/commands_de.txt` lists the app's
+commands. An answer that is not a command, but has exactly one command's sound
+code and the same number of words, becomes that command. Longer sentences
+never match, and two commands with the same code are never snapped.
+
 ```bash
 uv run ivg-eval --model models/ggml/<adapter>-q5_0.bin --split test --snap ...
 uv run ivg-demo --compare --snap --model models/ggml/<adapter>-q5_0.bin
@@ -204,9 +210,10 @@ uv run ivg-demo --compare --snap --model models/ggml/<adapter>-q5_0.bin
 | Split | Adapter WER | + snap WER |
 | --- | --- | --- |
 | dev (35 clips) | 13.9% | 10.9% |
-| test (39 clips) | 14.9% | 14.1% |
+| test (39 clips) | 14.9% | 12.4% |
 
-CER is unchanged: the fixes are single letters. No correct word was changed.
+On test it fixed geklabt, Seben → Sieben and Aushalten → Ausschalten.
+No correct word was changed.
 Some snaps turn one wrong word into another ("Zinge" becomes "Singe" when he
 said "Ziege"). So the snapped text is for display and free text only, never
 for booking values. Booking values go through `questions.resolve`.
