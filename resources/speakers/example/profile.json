@@ -1,0 +1,14 @@
+{
+  "speaker": "example",
+  "adapter": null,
+  "preprocess": "trim",
+  "prompt_phrases": [
+    "Ich möchte einen Flug buchen.",
+    "Von Berlin nach München, bitte.",
+    "Hin und Rückflug, am zwölften Oktober.",
+    "Ich brauche einen Rollstuhl am Flughafen.",
+    "Ja, das ist richtig."
+  ],
+  "lexicon": "resources/lexicon",
+  "extra_terms": []
+}

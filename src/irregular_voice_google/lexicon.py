@@ -12,14 +12,15 @@ from pathlib import Path
 from irregular_voice_google.text import normalize
 
 
-def load_lexicon(directory: str | Path) -> dict[str, list[str]]:
+def load_lexicon(directory: str | Path, raw: bool = False) -> dict[str, list[str]]:
+    """Slot -> terms, normalized for matching (or as written, with ``raw=True``)."""
     lexicon = {}
     for file in sorted(Path(directory).glob("*.txt")):
         terms = []
         for line in file.read_text(encoding="utf-8").splitlines():
             line = line.split("#", 1)[0].strip()
             if line:
-                terms.append(normalize(line))
+                terms.append(line if raw else normalize(line))
         lexicon[file.stem] = terms
     return lexicon
 

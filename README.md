@@ -106,6 +106,57 @@ Scoring spells out digits before comparing ("Am 12. Oktober" → "am zwölften
 oktober"), so references may use either digits or words. Ordinals use the
 dative form common in dates; numeric-only dates like "12.10." are not expanded.
 
+## Speaker profile and prompts
+
+A profile (`data/speakers/<id>/profile.json`, git-ignored; format in
+`resources/speakers/example/profile.json`) holds a speaker's adapter,
+preprocessing, a few of their own phrases and personal terms. `--profile`
+turns it into Whisper's prompt; Whisper reads a prompt as the preceding
+transcript, not as instructions, so it holds phrases rather than a description.
+
+```bash
+uv run ivg-eval --manifest data/processed/trim/manifest.csv --split dev \
+  --profile data/speakers/<id>/profile.json --prompt-parts phrases
+```
+
+`--prompt-parts` is `phrases` (default), `terms` (cities + airlines), both, or
+`none`. On our dev set a few of the speaker's own phrases helped; a long term
+list hurt. The prompt is capped at 200 tokens (Whisper's limit is 224) and may
+not contain an evaluated sentence.
+
+### Per-question prompts and grammars
+
+`resources/questions_de.json` lists the booking questions (destination,
+origin, date, airline, confirm). The app knows what it just asked, so each
+answer gets a short prompt (speaker phrases, the likely values, the question)
+and, on whisper.cpp, a GBNF grammar of `[carrier words] value [carrier words]`
+that steers decoding to the listed values (`questions.py`):
+
+```bash
+uv run ivg-eval --model models/ggml/<model>.bin --question destination ...
+```
+
+The grammar is soft: an off-list or half-finished answer can still come out,
+so the app should accept only answers where `questions.match()` finds a value
+and the lowest token probability (`min_p` column) is high enough, and ask again
+otherwise.
+
+## whisper.cpp
+
+The app runtime is [whisper.cpp](https://github.com/ggml-org/whisper.cpp)
+(`brew install whisper-cpp`): fast on a Mac's GPU, small quantized models, no
+Python, per-token probabilities and grammar-constrained decoding. The prompt
+limit is the same as in Python (half the 448-token context).
+
+```bash
+uv run ivg-ggml --model primeline/whisper-large-v3-turbo-german --quantize q5_0
+uv run ivg-ggml --model models/<adapter-dir> --quantize q5_0   # merges the LoRA first
+uv run ivg-eval --model models/ggml/primeline__whisper-large-v3-turbo-german-q5_0.bin ...
+```
+
+`ivg-eval` runs any `--model` ending in `.bin` through `whisper-cli`. On our
+dev set q5_0 (0.57 GB) scored the same as f16 (1.6 GB).
+
 ## Per-speaker fine-tuning (LoRA)
 
 ```bash
@@ -142,8 +193,14 @@ src/irregular_voice_google/
   train.py       # per-speaker LoRA fine-tune
   preprocess.py  # trim / tempo / EQ variants
   guard.py       # Whisper repetition-loop guard
+  profile.py     # per-speaker profile -> Whisper prompt
+  questions.py   # per-question prompts, GBNF grammars, answer matching
+  ggml.py        # HF model / LoRA adapter -> whisper.cpp ggml
+  cpp.py         # whisper.cpp backend (whisper-cli)
 resources/
   lexicon/       # one <slot>.txt per slot
+  questions_de.json  # booking questions: slots and carrier words
+  speakers/example/  # profile format (real profiles live in data/speakers/)
   prompts/       # German recording prompts + lexicon story
 tests/
 ```

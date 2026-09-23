@@ -1,6 +1,9 @@
 """Baseline evaluation: transcribe a manifest split with each model and score it.
 
 Writes per-utterance CSVs and a summary.json under ``results/<timestamp>/``.
+A ``--model`` ending in ``.bin`` is a whisper.cpp model from ``ivg-ggml`` and
+runs through ``whisper-cli``; ``--question`` adds that question's prompt (and,
+for whisper.cpp, its answer grammar).
 Results contain patient transcripts, so ``results/`` is git-ignored.
 """
 
@@ -18,11 +21,15 @@ import jiwer
 import torch
 from transformers import pipeline
 
+from irregular_voice_google import cpp, questions
 from irregular_voice_google.guard import guard, max_new_tokens
 from irregular_voice_google.lexicon import keyword_hits, load_lexicon
 from irregular_voice_google.manifest import SPLITS, Utterance, load_manifest
 from irregular_voice_google.preprocess import SAMPLE_RATE, load
+from irregular_voice_google.profile import check_prompt_not_in, load_profile, prompt_text
 from irregular_voice_google.text import normalize
+
+MAX_PROMPT_TOKENS = 200  # Whisper allows up to half its 448-token context for the prompt
 
 DEFAULT_MODELS = (
     "primeline/whisper-large-v3-turbo-german",
@@ -52,15 +59,37 @@ def load_asr(model: str, device: str, dtype: torch.dtype):
                     feature_extractor=processor.feature_extractor, device=device, dtype=dtype)
 
 
-def transcribe(model: str, utterances: list[Utterance], device: str, dtype: torch.dtype) -> tuple[list[str], list[str | None]]:
+def prompt_ids(asr, prompt: str, device: str) -> torch.Tensor:
+    ids = asr.tokenizer.get_prompt_ids(prompt, return_tensors="pt")
+    if len(ids) > MAX_PROMPT_TOKENS:  # keep <|startofprev|> and the most recent context
+        ids = torch.cat([ids[:1], ids[-(MAX_PROMPT_TOKENS - 1):]])
+    return ids.to(device)
+
+
+def prompt_echo(utterances: list[Utterance], hypotheses: list[str], prompt: str) -> float:
+    """Share of hypothesis words that come from the prompt but were not said."""
+    prompt_words = set(normalize(prompt).split())
+    echoed = total = 0
+    for utt, hyp in zip(utterances, hypotheses):
+        ref = set(normalize(utt.text).split())
+        words = normalize(hyp).split()
+        total += len(words)
+        echoed += sum(w in prompt_words and w not in ref for w in words)
+    return echoed / total if total else 0.0
+
+
+def transcribe(model: str, utterances: list[Utterance], device: str, dtype: torch.dtype,
+               prompt: str = "") -> tuple[list[str], list[str | None]]:
     """Guarded hypotheses plus, per utterance, why the loop guard fired (or None)."""
     asr = load_asr(model, device, dtype)
+    prompt_kwargs = {"prompt_ids": prompt_ids(asr, prompt, device)} if prompt else {}
     hypotheses, flags = [], []
     try:
         for i, utt in enumerate(utterances, 1):
             audio = load(utt.audio)
             seconds = len(audio) / SAMPLE_RATE
-            generate_kwargs = {"language": "german", "task": "transcribe", "max_new_tokens": max_new_tokens(seconds)}
+            generate_kwargs = {"language": "german", "task": "transcribe", "max_new_tokens": max_new_tokens(seconds),
+                               **prompt_kwargs}
             out = asr({"raw": audio, "sampling_rate": SAMPLE_RATE}, generate_kwargs=generate_kwargs, return_timestamps=False)
             text, flag = guard(out["text"].strip(), seconds)
             hypotheses.append(text)
@@ -77,18 +106,19 @@ def transcribe(model: str, utterances: list[Utterance], device: str, dtype: torc
 
 
 def score(utterances: list[Utterance], hypotheses: list[str], lexicon: dict[str, list[str]],
-          flags: list[str | None] | None = None) -> tuple[dict, list[dict]]:
+          flags: list[str | None] | None = None, min_p: list[float] | None = None) -> tuple[dict, list[dict]]:
     refs = [normalize(u.text) for u in utterances]
     hyps = [normalize(h) for h in hypotheses]
     rows = []
     flags = flags or [None] * len(utterances)
-    for utt, ref, hyp, raw, flag in zip(utterances, refs, hyps, hypotheses, flags):
+    for i, (utt, ref, hyp, raw, flag) in enumerate(zip(utterances, refs, hyps, hypotheses, flags)):
         rows.append({
             "audio": str(utt.audio),
             "reference": utt.text,
             "hypothesis": raw,
             "wer": round(jiwer.wer(ref, hyp), 4) if ref else "",
             "guard": flag or "",
+            **({"min_p": min_p[i]} if min_p else {}),
         })
 
     summary = {
@@ -116,6 +146,11 @@ def main() -> None:
     parser.add_argument("--lexicon", default="resources/lexicon")
     parser.add_argument("--out", default="results")
     parser.add_argument("--limit", type=int, help="Only the first N utterances (smoke tests).")
+    parser.add_argument("--profile", help="Speaker profile JSON; its phrases/terms become Whisper's prompt.")
+    parser.add_argument("--prompt-parts", default="phrases", help='"none", "phrases", "terms" or "phrases,terms".')
+    parser.add_argument("--question", help="booking question from resources/questions_de.json (e.g. destination); "
+                        "replaces --prompt-parts with that question's prompt, plus its grammar on whisper.cpp")
+    parser.add_argument("--no-grammar", action="store_true", help="with --question: prompt only, no grammar")
     args = parser.parse_args()
 
     utterances = load_manifest(args.manifest)
@@ -125,6 +160,16 @@ def main() -> None:
     if not utterances:
         raise SystemExit(f"no utterances in split {args.split!r} of {args.manifest}")
 
+    profile = load_profile(args.profile) if args.profile else None
+    question = questions.load_questions(lexicon=args.lexicon)[args.question] if args.question else None
+    if question:
+        prompt = questions.prompt(question, profile)
+    else:
+        prompt = prompt_text(profile, args.prompt_parts) if profile else ""
+    grammar = questions.grammar(question) if question and not args.no_grammar else None
+    if prompt:
+        check_prompt_not_in(prompt, utterances)
+        print(f"prompt ({len(prompt.split())} words): {prompt[:160]}{'…' if len(prompt) > 160 else ''}")
     lexicon = load_lexicon(args.lexicon) if Path(args.lexicon).is_dir() else {}
     device, dtype = pick_device()
     out_dir = Path(args.out) / datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -134,8 +179,12 @@ def main() -> None:
     for model in args.model or DEFAULT_MODELS:
         print(f"\n== {model} on {len(utterances)} {args.split} utterances ({device})")
         start = time.perf_counter()
-        hypotheses, flags = transcribe(model, utterances, device, dtype)
-        summary, rows = score(utterances, hypotheses, lexicon, flags)
+        if model.endswith(".bin"):
+            hypotheses, flags, min_p = cpp.transcribe(model, utterances, prompt, grammar)
+        else:
+            hypotheses, flags, min_p = *transcribe(model, utterances, device, dtype, prompt), None
+        summary, rows = score(utterances, hypotheses, lexicon, flags, min_p)
+        summary["prompt_echo"] = round(prompt_echo(utterances, hypotheses, prompt), 4) if prompt else 0.0
         summary["seconds"] = round(time.perf_counter() - start, 1)
         summaries[model] = summary
 
@@ -144,11 +193,13 @@ def main() -> None:
             writer.writeheader()
             writer.writerows(rows)
 
-    run = {"manifest": args.manifest, "split": args.split, "device": device, "models": summaries}
+    run = {"manifest": args.manifest, "split": args.split, "device": device, "profile": args.profile,
+           "prompt_parts": args.prompt_parts if prompt and not question else "none", "question": args.question,
+           "grammar": grammar, "prompt": prompt, "models": summaries}
     (out_dir / "summary.json").write_text(json.dumps(run, indent=2, ensure_ascii=False), encoding="utf-8")
 
-    print(f"\n{'model':<45} {'WER':>6} {'CER':>6} {'loops':>5}  keyword recall")
+    print(f"\n{'model':<45} {'WER':>6} {'CER':>6} {'loops':>5} {'echo':>5}  keyword recall")
     for model, s in summaries.items():
         kw = ", ".join(f"{k} {v['recall']:.0%}" for k, v in s["keyword_recall"].items())
-        print(f"{model:<45} {s['wer']:>6.1%} {s['cer']:>6.1%} {s['guard_flags']:>5}  {kw}")
+        print(f"{model:<45} {s['wer']:>6.1%} {s['cer']:>6.1%} {s['guard_flags']:>5} {s['prompt_echo']:>5.1%}  {kw}")
     print(f"\nresults: {out_dir}")

@@ -1,0 +1,33 @@
+{
+  "destination": {
+    "ask": "Wohin möchten Sie fliegen?",
+    "slots": ["cities"],
+    "before": ["nach", "ich möchte nach", "ich will nach", "ich fliege nach"],
+    "after": ["fliegen", "bitte"]
+  },
+  "origin": {
+    "ask": "Von wo fliegen Sie ab?",
+    "slots": ["cities"],
+    "before": ["von", "ab", "aus", "ich fliege von", "ich fliege ab"],
+    "after": ["aus", "bitte"]
+  },
+  "date": {
+    "ask": "Wann möchten Sie fliegen?",
+    "slots": ["dates"],
+    "day_numbers": true,
+    "before": ["am", "den", "ich möchte am", "nächsten", "diesen"],
+    "after": ["fliegen", "bitte"]
+  },
+  "airline": {
+    "ask": "Mit welcher Fluggesellschaft?",
+    "slots": ["airlines"],
+    "before": ["mit", "gerne mit", "lieber mit"],
+    "after": ["bitte"]
+  },
+  "confirm": {
+    "ask": "Ist das richtig?",
+    "values": ["ja", "nein", "richtig", "falsch", "ja, richtig", "nein, falsch", "bestätigen", "abbrechen", "wiederholen", "zurück"],
+    "before": [],
+    "after": ["bitte"]
+  }
+}

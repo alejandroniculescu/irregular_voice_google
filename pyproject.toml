@@ -21,6 +21,7 @@ ivg-record = "irregular_voice_google.recorder:main"
 ivg-import-samples = "irregular_voice_google.import_samples:main"
 ivg-train = "irregular_voice_google.train:main"
 ivg-preprocess = "irregular_voice_google.preprocess:main"
+ivg-ggml = "irregular_voice_google.ggml:main"
 
 [dependency-groups]
 dev = [
