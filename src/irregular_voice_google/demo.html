@@ -85,6 +85,35 @@ const LABELS = { accept: "✓ verstanden", confirm: "? nachfragen", choose: "? A
 let step = null, busy = false;
 let ctx = null, stream = null, node = null, chunks = [], recording = false, startedAt = 0, tick = null;
 
+// --- connection: the phone reaches the Mac over the USB bridge (adb reverse), which can drop ---
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+async function post(path, body, type) {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      const r = await fetch(api(path), { method: "POST", body, headers: type ? { "Content-Type": type } : {} });
+      const data = await r.json();
+      if (!r.ok) throw Object.assign(new Error(data.error || r.status), { fatal: true });
+      return data;
+    } catch (e) {
+      if (e.fatal || attempt >= 10) throw e;
+      setStatus(`Verbindung zum Mac unterbrochen – USB-Kabel prüfen … (Versuch ${attempt})`);
+      await sleep(2000);
+    }
+  }
+}
+
+// --- keep the screen on: a phone that locks also silences the microphone ---
+let wakeLock = null;
+async function keepAwake() {
+  try { if (!wakeLock && navigator.wakeLock) wakeLock = await navigator.wakeLock.request("screen"); } catch {}
+  wakeLock?.addEventListener?.("release", () => { wakeLock = null; });
+}
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState !== "visible") return;
+  keepAwake();
+  if (stream && stream.getAudioTracks().some(t => t.readyState === "ended")) resetMic();
+});
+
 // --- speech out: the browser's German voice ---
 let voice = null;
 function pickVoice() {
@@ -153,10 +182,7 @@ async function choose(value, label) {
   busy = true; speechSynthesis.cancel();
   for (const b of $("choices").children) b.disabled = true;
   try {
-    const r = await fetch(api("/api/choose"), { method: "POST", body: JSON.stringify({ value }),
-                                                headers: { "Content-Type": "application/json" } });
-    const data = await r.json();
-    if (!r.ok) throw new Error(data.error || r.status);
+    const data = await post("/api/choose", JSON.stringify({ value }), "application/json");
     add("me", `<q>${esc(label.trim())}</q><span class="tag accept">👆 getippt</span>`);
     show(data.step);
   } catch (e) {
@@ -167,8 +193,8 @@ async function choose(value, label) {
 
 async function start() {
   $("log").innerHTML = ""; $("choices").innerHTML = "";
-  const r = await fetch(api("/api/start"), { method: "POST" });
-  show((await r.json()).step);
+  keepAwake();
+  try { show((await post("/api/start")).step); } catch (e) { setStatus("Fehler: " + e.message); }
 }
 
 // --- microphone ---
@@ -210,14 +236,17 @@ async function stopRecording() {
     return setStatus("Zu kurz – bitte noch einmal.");
   }
   const samples = new Float32Array(length);
-  let offset = 0; for (const c of chunks) { samples.set(c, offset); offset += c.length; }
+  let offset = 0, peak = 0;
+  for (const c of chunks) { samples.set(c, offset); offset += c.length; }
+  for (let i = 0; i < samples.length; i++) peak = Math.max(peak, Math.abs(samples[i]));
+  if (peak < 1e-4) {  // all zeros: the microphone was cut off (screen lock, other app); reconnect it
+    resetMic(); $("mic").textContent = "● Antworten";
+    return setStatus("Kein Ton vom Mikrofon – bitte noch einmal drücken und sprechen.");
+  }
   busy = true; $("mic").disabled = true; $("mic").textContent = "… verstehe";
   setStatus("Whisper transkribiert …");
   try {
-    const r = await fetch(api("/api/answer"), { method: "POST", body: encodeWav(samples, ctx.sampleRate),
-                                           headers: { "Content-Type": "audio/wav" } });
-    const data = await r.json();
-    if (!r.ok) throw new Error(data.error || r.status);
+    const data = await post("/api/answer", encodeWav(samples, ctx.sampleRate), "audio/wav");
     const h = data.heard;
     add("me", `<q>${esc(h.text) || "…"}</q><span class="tag ${h.action}">${LABELS[h.action]}`
               + (h.value ? ` → ${esc(h.value)}` : "") + (h.guard ? ` (${esc(h.guard)})` : "")
@@ -226,6 +255,12 @@ async function stopRecording() {
   } catch (e) {
     setStatus("Fehler: " + e.message); $("mic").disabled = false; $("mic").textContent = "● Antworten";
   } finally { busy = false; }
+}
+
+function resetMic() {
+  stream?.getTracks().forEach(t => t.stop());
+  ctx?.close().catch(() => {});
+  ctx = stream = node = null;
 }
 
 function encodeWav(samples, rate) {
@@ -247,6 +282,13 @@ function micPressed() {
   if (!step) return start();
   recording ? stopRecording() : startRecording().catch(e => setStatus("Mikrofon: " + e.message));
 }
+(async () => {  // a reload (or a dropped connection) continues the conversation instead of starting over
+  try {
+    const r = await fetch(api("/api/state"));
+    const s = r.ok && (await r.json()).step;
+    if (s && s.listen !== null) { add("bot", "<small>(fortgesetzt)</small>"); show(s); keepAwake(); }
+  } catch {}
+})();
 $("mic").onclick = micPressed;
 $("again").onclick = () => step && speak(step.say);
 $("restart").onclick = () => { if (!busy) { recording = false; clearInterval(tick); start(); } };

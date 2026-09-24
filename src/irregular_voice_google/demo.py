@@ -49,6 +49,7 @@ from urllib.parse import parse_qs, urlparse
 
 from irregular_voice_google import cpp, questions, snap
 import jiwer
+import numpy as np
 
 from irregular_voice_google.guard import guard
 from irregular_voice_google.manifest import load_manifest
@@ -59,6 +60,7 @@ from irregular_voice_google.text import normalize
 
 FLOW = ["destination", "origin", "date", "airline"]
 MAX_TRIES = 3
+SILENT = 1e-3  # peak below this is no speech at all
 
 
 def list_mics() -> None:
@@ -242,6 +244,11 @@ class Transcriber:
     def hear(self, wav: Path, q: questions.Question) -> questions.Decision:
         audio = load(wav, self.profile.preprocess)
         seconds = len(audio) / SAMPLE_RATE
+        if seconds < 0.1 or float(np.abs(audio).max()) < SILENT:  # dead mic (screen off) or all trimmed away
+            print("  gehört: nichts (stumm)  -> REPEAT", flush=True)
+            self.takes.append({"audio": wav.name, "question": q.name, "text": "", "min_p": 0.0,
+                               "action": "repeat", "value": None, "guard": "stumm"})
+            return questions.Decision("repeat")
         start = time.perf_counter()
         processed = self.out / "last.wav"
         cpp.write_wav(audio, processed)
@@ -327,6 +334,9 @@ def make_handler(args: argparse.Namespace, profile: Profile, token: str | None =
         def do_GET(self):
             if not self._authorized():
                 return None
+            if urlparse(self.path).path == "/api/state":  # a reloaded page picks the conversation up again
+                with lock:
+                    return self._json({"step": state.get("step")})
             if urlparse(self.path).path != "/":
                 return self.send_error(HTTPStatus.NOT_FOUND)
             self.send_response(HTTPStatus.OK)
@@ -344,7 +354,8 @@ def make_handler(args: argparse.Namespace, profile: Profile, token: str | None =
             with lock:
                 if path == "/api/start":
                     state["ear"], state["dialog"] = Transcriber(args, profile), Dialog(qs)
-                    return self._json({"step": state["dialog"].start()})
+                    state["step"] = state["dialog"].start()
+                    return self._json({"step": state["step"]})
                 if path not in ("/api/answer", "/api/choose"):
                     return self.send_error(HTTPStatus.NOT_FOUND)
                 dialog = state.get("dialog")
@@ -357,6 +368,7 @@ def make_handler(args: argparse.Namespace, profile: Profile, token: str | None =
                         step = dialog.choose(value)
                     except (ValueError, AttributeError) as e:
                         return self._json({"error": str(e)}, HTTPStatus.BAD_REQUEST)
+                    state["step"] = step
                     ear.takes.append({"question": "choice", "tapped": value})
                     print(f"  getippt: {value!r}", flush=True)
                     if step["listen"] is None:
@@ -372,7 +384,7 @@ def make_handler(args: argparse.Namespace, profile: Profile, token: str | None =
                 except Exception as e:  # keep the page usable; the take stays on disk
                     print(f"  Fehler: {e!r}", flush=True)
                     return self._json({"error": "Transkription fehlgeschlagen"}, HTTPStatus.INTERNAL_SERVER_ERROR)
-                step = dialog.answer(decision)
+                step = state["step"] = dialog.answer(decision)
                 if step["listen"] is None:
                     ear.save(dialog)
                 return self._json({"heard": ear.takes[-1], "step": step})

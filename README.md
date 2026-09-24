@@ -203,6 +203,16 @@ picks one. He can tap a big button, say the name, say its number ("eins",
 "keins davon" asks the question again. The readback at the end has "Ja, buchen"
 and "Nein" buttons as well.
 
+For a phone on USB, `scripts/phone-bridge.sh` keeps `adb reverse` up: it
+restores the bridge whenever the phone reconnects. The page stays usable
+through hiccups:
+- It keeps the screen on (Wake Lock), because a locked phone silences the
+  microphone.
+- It catches an all-silent recording, reconnects the microphone and asks again.
+  The server also treats a silent take as "please repeat".
+- It retries requests while the cable is out.
+- It resumes the conversation after a reload (`/api/state`).
+
 On a phone, the Mac still does the transcribing: `--web --lan` serves the
 page over HTTPS on the local network (self-signed certificate, random token in
 the printed URL); open it on a phone on the same Wi-Fi and accept the warning.
