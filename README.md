@@ -372,6 +372,46 @@ uv run ivg-train --augment 0.5 --extra-manifest data/synthetic/booking/manifest.
 
 Patient audio should not go to a cloud GPU unless the consent covers it.
 
+### Other speakers: the adapter is personal
+
+The adapter is trained on one speaker. To see whether it carries over, the
+test split of
+[B-Czarnetzki/dysarthric_german](https://huggingface.co/datasets/B-Czarnetzki/dysarthric_german)
+was scored as well: 125 clips (38 min) of other German speakers with
+dysarthria. Its card names no source, license or speakers, so it is used for
+internal comparison only and stays under the git-ignored `data/external/`.
+
+```bash
+uvx --from huggingface_hub hf download B-Czarnetzki/dysarthric_german \
+    data/test-00000-of-00001-b8a965f992d610f9.parquet --repo-type dataset \
+    --local-dir data/external/dysarthric_german
+uv run --with pyarrow --with soundfile python scripts/external_dysarthric_german.py
+uv run ivg-eval --manifest data/external/dysarthric_german/manifest.csv \
+    --model models/ggml/primeline__whisper-large-v3-turbo-german-q5_0.bin \
+    --model models/ggml/<adapter>-q5_0.bin
+```
+
+| test WER | his clips (39) | other speakers (125) |
+|---|---|---|
+| base `primeline/whisper-large-v3-turbo-german` (no prompt, no snap) | 55.4% | 60.6% |
+| his adapter (no prompt, no snap) | 13.2% | 109.4% (12 loops) |
+| his adapter + his profile prompt + snap (the demo setup) | 10.7% (snap only) | 113.3% (9 loops) |
+
+The adapter cuts his errors by three quarters and does not transfer: it is
+better than the base model on 7 of the 125 other clips and worse on 108. It
+learned his recordings, not dysarthric German in general. Much of his material
+is lists of short words, so it splits other people's speech into syllables
+("Auch, alle, Mö, W, Mö, B, Jüngel, U." for "Auch alle Menschen mit
+Behinderungen.") and fills in words from his sentences. Each patient needs
+their own adapter. The base model's score on other speakers (60.6%, median
+59%, from 8 clips under 20% to 23 over 100%) is the fair reference for how
+hard dysarthric German is without adaptation.
+
+His profile prompt and snap do not help either: the prompt holds his phrases,
+not theirs, and snap cannot rejoin speech split into syllables. The adapter is
+also very unsure on these clips (lowest word probability about 0.05–0.09), so
+in the demo their takes would be read back or asked again, not acted on.
+
 ## Tests
 
 ```bash
@@ -409,5 +449,8 @@ resources/
   home_de.json   # home control: devices, rooms, actions and their synonyms
   speakers/example/  # profile format (real profiles live in data/speakers/)
   prompts/       # German recording prompts + lexicon story
+scripts/
+  phone-bridge.sh  # keeps adb reverse up for the phone demo
+  external_dysarthric_german.py  # other speakers' test clips -> manifest
 tests/
 ```
