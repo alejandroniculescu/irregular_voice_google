@@ -42,3 +42,13 @@ def test_process_manifest_keeps_text_and_split(tmp_path):
     [u] = load_manifest(out)
     assert (u.text, u.split, u.speaker) == ("Hallo.", "test", "p")
     assert u.audio.exists() and "trim" in u.audio.parts
+
+
+def test_16k_mono_wav_loads_without_ffmpeg(tmp_path, monkeypatch):
+    wav = tmp_path / "a.wav"
+    _tone_with_silence(wav)
+    expected = load(wav, "trim,tempo=1.0")[:0]  # warm path via ffmpeg still works
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: (_ for _ in ()).throw(AssertionError("ffmpeg called")))
+    audio = load(wav)
+    assert audio.dtype == np.float32 and len(audio) == 48_000 and expected.size == 0
+    assert np.abs(audio).max() == pytest.approx(0.5, abs=1e-3)

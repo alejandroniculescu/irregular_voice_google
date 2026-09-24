@@ -1,0 +1,27 @@
+# Short spoken commands the app knows (one per line). snap.py maps a short
+# answer that sounds exactly like one of these (same Kölner Phonetik code,
+# same number of words) to it: "Aushalten" -> "Ausschalten".
+Abbrechen
+Einschalten
+Ausschalten
+Alle Lichter
+Nach oben
+Nach unten
+Nach links
+Nach rechts
+Bad
+Küche
+Wohnzimmer
+Schlafzimmer
+Harmonie
+Null
+Eins
+Zwei
+Drei
+Vier
+Fünf
+Sechs
+Sieben
+Acht
+Neun
+Zehn

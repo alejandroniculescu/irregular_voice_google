@@ -105,6 +105,11 @@ transcript should trigger "please repeat", never an action.
 Scoring spells out digits before comparing ("Am 12. Oktober" → "am zwölften
 oktober"), so references may use either digits or words. Ordinals use the
 dative form common in dates; numeric-only dates like "12.10." are not expanded.
+Spellings that sound the same count as equal: ß = ss (Whisper often writes the
+Swiss "Grosses"), and a lone letter is scored as its name ("scharfes ß" and
+"scharfes S" are both "scharfes es"). The train/dev/test split hash uses the
+unfolded text, so no clip changed split. With this, the adapter's test WER is
+13.2% (was 14.9%) and the base model's 55.4% (was 57.9%).
 
 ## Speaker profile and prompts
 
@@ -141,6 +146,103 @@ so the app should accept only answers where `questions.match()` finds a value
 and the lowest token probability (`min_p` column) is high enough, and ask again
 otherwise.
 
+`questions.resolve(question, text, min_p)` makes that call:
+
+- **accept**: a listed value is spelled out and `min_p` ≥ 0.5;
+- **confirm** ("Meinten Sie Sieben?"): a listed value heard with low
+  confidence, or a transcript that only *sounds like* one value — compared by
+  Kölner Phonetik code (`phonetic.py`), so "Seben" → "sieben" and
+  "Aushalten" → "ausschalten";
+- **repeat**: no value, several sound-alikes, or a loop-guard flag.
+
+Replaying the adapter's test transcripts of the command clips (15, against the
+speaker's 25-command list) gave 12 accepted (all right), 2 confirmed (both
+right) and 1 repeat; nothing wrong was accepted.
+
+## Live demo
+
+```bash
+uv run ivg-demo --list-mics                       # find the headset's device index
+uv run ivg-demo --profile data/speakers/<id>/profile.json \
+  --model models/ggml/<adapter>-q5_0.bin --mic <index> --say
+```
+
+Asks the booking questions (spoken with `--say`), records each answer (Enter to
+start, Enter to stop), transcribes it on the Mac with whisper.cpp and shows
+what `resolve` decides: accept, "Meinten Sie …?" or ask again (three tries).
+It ends by reading back the booking for a yes/no. Takes and a `session.json`
+log go to `data/demo/<timestamp>/` (git-ignored).
+
+Decoding is plain by default. The adapter was trained and scored without a
+prompt or grammar, and with the grammar on it misheard clear answers
+("Von München" → "Zurück", confidence below the threshold); `--prompt` and
+`--grammar` turn them back on. `--wav a.wav b.wav …` replays files instead of
+the microphone, for a dry run.
+
+```bash
+uv run ivg-demo --compare --model models/ggml/<adapter>-q5_0.bin
+```
+
+`--compare` shows the before/after instead: it transcribes the speaker's test
+clips (never trained on) with the base model and the adapter and opens a local
+page with each clip's waveform, spectrogram (0–8 kHz, which shows the
+muffling) and playback, the two transcripts with wrong words marked, and the
+overall WER. The page embeds the audio, so it is written to `data/demo/` and
+must stay there.
+
+### Snapping non-words to real words
+
+The adapter often hears the right sounds but writes a non-word: "geklabt" for
+"geklappt". `snap.py` replaces any word that the German frequency list
+([wordfreq](https://pypi.org/project/wordfreq/)) has never seen, and that is
+not in the speaker's train transcripts or the lexicons, with a real word that
+has the same Kölner Phonetik code and is at most one or two edits away.
+Voicing swaps (b/p, d/t, g/k), doubled consonants and h count as half an edit.
+Among equally close words, the more frequent one wins. Rare real words
+("pufft") are left alone.
+
+Real words that are wrong ("Aushalten" for "Ausschalten") are only fixed for
+short answers to a command prompt. `resources/commands_de.txt` lists the app's
+commands. An answer that is not a command, but has exactly one command's sound
+code and the same number of words, becomes that command. Longer sentences
+never match, and two commands with the same code are never snapped.
+
+```bash
+uv run ivg-eval --model models/ggml/<adapter>-q5_0.bin --split test --snap ...
+uv run ivg-demo --compare --snap --model models/ggml/<adapter>-q5_0.bin
+```
+
+| Split | Adapter WER | + snap WER |
+| --- | --- | --- |
+| dev (35 clips) | 13.9% | 10.9% |
+| test (39 clips) | 13.2% | 10.7% |
+
+On test it fixed geklabt, Seben → Sieben and Aushalten → Ausschalten.
+No correct word was changed.
+Some snaps turn one wrong word into another ("Zinge" becomes "Singe" when he
+said "Ziege"). So the snapped text is for display and free text only, never
+for booking values. Booking values go through `questions.resolve`.
+
+#### Experiment: a small local language model (didn't help)
+
+`llmfix.py` lets a local Ollama model propose a corrected sentence for real
+words that make no sense ("Schweich schmeckt seidig"). A changed word is kept
+only if it is a real word, sounds close (Kölner Phonetik code at most 1–2
+edits away) and replaces exactly one heard word:
+
+```bash
+ollama serve & ollama pull qwen2.5:3b
+uv run ivg-eval --model models/ggml/<adapter>-q5_0.bin --split dev --snap --llm qwen2.5:3b ...
+```
+
+With `qwen2.5:3b` on dev, WER went from 10.9% (snap) to 15.3%, and CER from
+3.4% to 5.9%. It made one right fix (sackt → sägt) and broke eight correct
+words (Zaun → Zun, warm → wär, Thymian → Thunfisch, Jara → Joghurt, …).
+Tightening the sound check would not have stopped most of these: the model
+has too little sense of German for sentences that are odd on purpose. It needs
+a stronger model, and a gate that scores candidates instead of trusting a
+rewrite.
+
 ## whisper.cpp
 
 The app runtime is [whisper.cpp](https://github.com/ggml-org/whisper.cpp)
@@ -171,6 +273,34 @@ patient audio). It refuses to run if a train sentence also appears in dev/test,
 and never reads the test split. On a Mac only smoke runs are practical:
 `uv run ivg-train --base openai/whisper-tiny --limit 8 --epochs 2`.
 
+On a 24 GB GPU, `--batch-size 4 --grad-accum 2 --grad-checkpointing` fits in
+about 7 GB (the default batch of 8 without checkpointing runs out of memory).
+Progress is printed every `--log-every` batches with loss and time left, so a
+run can be followed with `tail -f` on its log. Each epoch also reports dev CER
+and the WER on a fixed sample of the speaker's own train clips (unaugmented,
+same size as dev); a train WER far below dev WER means the adapter is
+memorising the recordings.
+
+Two ways to stretch a small recording set:
+
+```bash
+uv run ivg-train --augment 0.5                    # speed, muffle, reverb, noise, gain on the fly
+uv run ivg-synth --exclude data/processed/trim/manifest.csv   # macOS: TTS booking answers
+uv run ivg-train --augment 0.5 --extra-manifest data/synthetic/booking/manifest.csv
+```
+
+`--dora` trains DoRA instead of plain LoRA and `--rank` sets the adapter rank
+(default 32).
+
+- `--augment P` applies each augmentation with probability `P` to training
+  batches only (numpy, no ffmpeg needed on the GPU box). Augmented runs need
+  more epochs; use a long `--patience` so a lucky early epoch does not end the run.
+- `ivg-synth` renders the answers to the booking questions (cities, dates,
+  airlines, whole requests) with the German macOS `say` voices, slowed and
+  low-passed, into `data/synthetic/booking/` (git-ignored). Sentences that
+  appear in the patient's dev/test split are skipped, and `ivg-train` checks
+  extra manifests for leaks too; extra data is always training-only.
+
 Patient audio should not go to a cloud GPU unless the consent covers it.
 
 ## Tests
@@ -191,12 +321,18 @@ src/irregular_voice_google/
   recorder.py    # local recording server (+ recorder.html)
   import_samples.py  # import a voice_samples_* export
   train.py       # per-speaker LoRA fine-tune
+  augment.py     # training-time audio augmentation
+  synth.py       # synthetic TTS booking utterances
   preprocess.py  # trim / tempo / EQ variants
   guard.py       # Whisper repetition-loop guard
   profile.py     # per-speaker profile -> Whisper prompt
-  questions.py   # per-question prompts, GBNF grammars, answer matching
+  questions.py   # per-question prompts, GBNF grammars, answer matching/decisions
+  phonetic.py    # Kölner Phonetik sound codes
+  snap.py        # non-words -> same-sounding real words (wordfreq)
+  llmfix.py      # experiment: local LLM word fixes, gated by sound
   ggml.py        # HF model / LoRA adapter -> whisper.cpp ggml
   cpp.py         # whisper.cpp backend (whisper-cli)
+  demo.py        # live booking demo + base-vs-adapter page (compare.html)
 resources/
   lexicon/       # one <slot>.txt per slot
   questions_de.json  # booking questions: slots and carrier words
