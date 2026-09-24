@@ -193,6 +193,12 @@ button (or the space bar) records the answer. The page shows what Whisper
 heard, the decision (understood, "Meinten Sie …?" or again) and the booking
 filling in. Takes and `session.json` go to `data/demo/<timestamp>/` as before.
 
+On a phone, the Mac still does the transcribing: `--web --lan` serves the
+page over HTTPS on the local network (self-signed certificate, random token in
+the printed URL); open it on a phone on the same Wi-Fi and accept the warning.
+An Android emulator on the same Mac needs no HTTPS: run
+`adb reverse tcp:8766 tcp:8766` and open http://localhost:8766 in its Chrome.
+
 ```bash
 uv run ivg-demo --compare --model models/ggml/<adapter>-q5_0.bin
 ```

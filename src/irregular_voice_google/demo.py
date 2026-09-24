@@ -17,6 +17,9 @@ macOS only (``say``, ffmpeg's avfoundation input).
 ``--web`` runs the same dialog as a local page (http://localhost:8766, bound
 to 127.0.0.1): the browser speaks the questions (German system voice) and
 records with a big mic button; this machine transcribes and decides.
+``--web --lan`` serves it over HTTPS with a token for a phone on the same
+Wi-Fi; an Android emulator can use plain ``adb reverse tcp:8766 tcp:8766``
+and http://localhost:8766 instead.
 
 ``--compare`` instead writes a local page (under ``--out``, git-ignored) with
 the speaker's held-out test clips: waveform, spectrogram, playback and the base
@@ -34,6 +37,7 @@ import json
 import re
 import subprocess
 import random
+import secrets
 import threading
 import time
 from datetime import datetime
@@ -41,7 +45,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.resources import files
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 from irregular_voice_google import cpp, questions, snap
 import jiwer
@@ -50,7 +54,7 @@ from irregular_voice_google.guard import guard
 from irregular_voice_google.manifest import load_manifest
 from irregular_voice_google.preprocess import SAMPLE_RATE, load
 from irregular_voice_google.profile import Profile, load_profile
-from irregular_voice_google.recorder import MAX_UPLOAD_BYTES
+from irregular_voice_google.recorder import MAX_UPLOAD_BYTES, lan_ips, self_signed_context
 from irregular_voice_google.text import normalize
 
 FLOW = ["destination", "origin", "date", "airline"]
@@ -250,7 +254,7 @@ class Session:
         print(f"\nAufnahmen und Protokoll: {self.ear.out}")
 
 
-def make_handler(args: argparse.Namespace, profile: Profile):
+def make_handler(args: argparse.Namespace, profile: Profile, token: str | None = None):
     """Local web demo: the page speaks (browser TTS) and records; this side transcribes and decides."""
     page = files("irregular_voice_google").joinpath("demo.html").read_bytes()
     qs = questions.load_questions()
@@ -267,7 +271,15 @@ def make_handler(args: argparse.Namespace, profile: Profile):
             self.end_headers()
             self.wfile.write(body)
 
+        def _authorized(self) -> bool:
+            if token is None or parse_qs(urlparse(self.path).query).get("token", [None])[0] == token:
+                return True
+            self.send_error(HTTPStatus.FORBIDDEN)
+            return False
+
         def do_GET(self):
+            if not self._authorized():
+                return None
             if urlparse(self.path).path != "/":
                 return self.send_error(HTTPStatus.NOT_FOUND)
             self.send_response(HTTPStatus.OK)
@@ -277,6 +289,8 @@ def make_handler(args: argparse.Namespace, profile: Profile):
             self.wfile.write(page)
 
         def do_POST(self):
+            if not self._authorized():
+                return None
             path = urlparse(self.path).path
             length = int(self.headers.get("Content-Length", 0))
             body = self.rfile.read(length) if 0 < length <= MAX_UPLOAD_BYTES else b""
@@ -312,9 +326,19 @@ def make_handler(args: argparse.Namespace, profile: Profile):
 
 
 def serve(args: argparse.Namespace, profile: Profile) -> None:
-    server = ThreadingHTTPServer(("127.0.0.1", args.port), make_handler(args, profile))
-    url = f"http://localhost:{args.port}/"
-    print(f"Web-Demo: {url}  (nur auf diesem Mac; Strg+C beendet)")
+    token = secrets.token_urlsafe(12) if args.lan else None
+    server = ThreadingHTTPServer(("0.0.0.0" if args.lan else "127.0.0.1", args.port),
+                                 make_handler(args, profile, token))
+    if args.lan:  # a phone needs HTTPS for the microphone; the token keeps others on the network out
+        server.socket = self_signed_context(Path("data/.recorder-cert")).wrap_socket(server.socket, server_side=True)
+        print("Handy im selben WLAN: eine dieser Adressen öffnen (meist en0), Zertifikatswarnung akzeptieren.")
+        for entry in lan_ips():
+            ip, iface = entry.split(" ", 1)
+            print(f"  https://{ip}:{args.port}/?token={token}  {iface}")
+        url = f"https://localhost:{args.port}/?token={token}"
+    else:
+        url = f"http://localhost:{args.port}/"
+    print(f"Web-Demo: {url}  (Strg+C beendet)", flush=True)
     subprocess.run(["open", url])
     try:
         server.serve_forever()
@@ -344,6 +368,7 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--web", action="store_true", help="local web page: mic button, spoken questions")
     parser.add_argument("--port", type=int, default=8766, help="--web port (bound to 127.0.0.1)")
+    parser.add_argument("--lan", action="store_true", help="--web over HTTPS on the local network, for a phone")
     args = parser.parse_args()
     if args.list_mics:
         return list_mics()

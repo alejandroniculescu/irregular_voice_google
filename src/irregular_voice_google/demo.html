@@ -71,6 +71,8 @@
 <script>
 const MAX_SECONDS = 20;
 const $ = (id) => document.getElementById(id);
+const token = new URLSearchParams(location.search).get("token");
+const api = (path) => path + (token ? "?token=" + encodeURIComponent(token) : "");
 const LABELS = { accept: "✓ verstanden", confirm: "? nachfragen", repeat: "↺ nochmal" };
 
 let step = null, busy = false;
@@ -119,7 +121,7 @@ function show(s) {
 
 async function start() {
   $("log").innerHTML = "";
-  const r = await fetch("/api/start", { method: "POST" });
+  const r = await fetch(api("/api/start"), { method: "POST" });
   show((await r.json()).step);
 }
 
@@ -166,7 +168,7 @@ async function stopRecording() {
   busy = true; $("mic").disabled = true; $("mic").textContent = "… verstehe";
   setStatus("Whisper transkribiert …");
   try {
-    const r = await fetch("/api/answer", { method: "POST", body: encodeWav(samples, ctx.sampleRate),
+    const r = await fetch(api("/api/answer"), { method: "POST", body: encodeWav(samples, ctx.sampleRate),
                                            headers: { "Content-Type": "audio/wav" } });
     const data = await r.json();
     if (!r.ok) throw new Error(data.error || r.status);
