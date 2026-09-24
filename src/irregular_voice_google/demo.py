@@ -140,6 +140,9 @@ class Dialog:
     (``choose``); repeat asks again. After ``MAX_TRIES`` a question is left empty.
     """
 
+    title = "Flug buchen per Stimme"
+    fields = [("destination", "Wohin"), ("origin", "Von wo"), ("date", "Wann"), ("airline", "Airline")]
+
     def __init__(self, qs: dict[str, questions.Question]):
         self.questions = qs
         self.booking: dict[str, str | None] = dict.fromkeys(FLOW)
@@ -159,7 +162,13 @@ class Dialog:
                   "final": "choice", "done": None}[self.phase]
         asking = FLOW[self.i] if self.phase in ("ask", "confirm") else None
         return {"say": say, "listen": listen, "asking": asking, "phase": self.phase, "booking": dict(self.booking),
-                "choices": list(self.choices), "confirmed": self.confirmed}
+                "choices": list(self.choices), "confirmed": self.confirmed, "title": self.title,
+                "fields": self.fields, "house": None}
+
+    def decide(self, q: questions.Question, text: str, min_p: float, threshold: float,
+               flagged: bool) -> questions.Decision:
+        """What a transcribed answer to ``q`` means."""
+        return questions.resolve(q, text, min_p, threshold, flagged)
 
     def start(self) -> dict:
         return self.step(self.questions[FLOW[0]].ask)
@@ -168,12 +177,12 @@ class Dialog:
         b = {k: v or "?" for k, v in self.booking.items()}
         return f"Ein Flug von {b['origin']} nach {b['destination']}, am {b['date']}, mit {b['airline']}."
 
-    def offer(self, choices: list[str]) -> dict:
+    def offer(self, choices: list[str], lead: str = "Meinten Sie") -> dict:
         self.phase, self.choices = "confirm", choices[:3]
         if len(self.choices) == 1:
-            return self.step(f"Meinten Sie {self.choices[0]}?")
+            return self.step(f"{lead} {self.choices[0]}?")
         named = [f"{n}: {c}" for n, c in zip(ORDINAL, self.choices)]
-        return self.step(f"Meinten Sie {', '.join(named[:-1])}, oder {named[-1]}?")
+        return self.step(f"{lead} {', '.join(named[:-1])}, oder {named[-1]}?")
 
     def picked(self, d: questions.Decision) -> str | None:
         """The offered value an answer in the confirm phase picks, if any."""
@@ -229,6 +238,13 @@ class Dialog:
         return self.step(prefix + self.summary() + " Ist das richtig?")
 
 
+def new_dialog(args: argparse.Namespace) -> Dialog:
+    if getattr(args, "scenario", "flight") == "home":
+        from irregular_voice_google.home import HomeDialog
+        return HomeDialog()
+    return Dialog(questions.load_questions())
+
+
 class Transcriber:
     """Transcribes answers with whisper.cpp and logs every take under ``data/demo/<timestamp>/``."""
 
@@ -241,7 +257,7 @@ class Transcriber:
     def path(self, q: questions.Question) -> Path:
         return self.out / f"{len(self.takes) + 1:03d}-{q.name}.wav"
 
-    def hear(self, wav: Path, q: questions.Question) -> questions.Decision:
+    def hear(self, wav: Path, q: questions.Question, decide=None) -> questions.Decision:
         audio = load(wav, self.profile.preprocess)
         seconds = len(audio) / SAMPLE_RATE
         if seconds < 0.1 or float(np.abs(audio).max()) < SILENT:  # dead mic (screen off) or all trimmed away
@@ -256,7 +272,7 @@ class Transcriber:
         grammar = questions.grammar(q) if self.args.grammar else None
         result = cpp.run(self.args.model, [processed], prompt, grammar)[0]
         text, flag = guard(result.text, seconds)
-        decision = questions.resolve(q, text, result.min_p, self.args.threshold, bool(flag))
+        decision = (decide or questions.resolve)(q, text, result.min_p, self.args.threshold, bool(flag))
         if q.day_numbers and decision.value and (day := re.search(rf"(\d{{1,2}})\.?\s+{re.escape(decision.value)}",
                                                                      text, re.IGNORECASE)):
             decision.value = f"{day[1]}. {decision.value}"  # keep the day for the readback
@@ -270,7 +286,7 @@ class Transcriber:
     def save(self, dialog: Dialog) -> None:
         (self.out / "session.json").write_text(json.dumps(
             {"model": str(self.args.model), "booking": dialog.booking, "confirmed": dialog.confirmed,
-             "takes": self.takes}, indent=2, ensure_ascii=False), encoding="utf-8")
+             "house": getattr(dialog, "house", None), "takes": self.takes}, indent=2, ensure_ascii=False), encoding="utf-8")
         (self.out / "last.wav").unlink(missing_ok=True)
 
 
@@ -280,7 +296,7 @@ class Session:
     def __init__(self, args: argparse.Namespace, profile: Profile):
         self.args = args
         self.ear = Transcriber(args, profile)
-        self.dialog = Dialog(questions.load_questions())
+        self.dialog = new_dialog(args)
 
     def say(self, text: str) -> None:
         print(f"\n» {text}")
@@ -295,7 +311,7 @@ class Session:
             wav = Path(self.args.wav.pop(0))
         else:
             record(wav, self.args.mic)
-        return self.ear.hear(wav, q)
+        return self.ear.hear(wav, q, self.dialog.decide)
 
     def run(self) -> None:
         step = self.dialog.start()
@@ -310,8 +326,9 @@ class Session:
 
 def make_handler(args: argparse.Namespace, profile: Profile, token: str | None = None):
     """Local web demo: the page speaks (browser TTS) and records; this side transcribes and decides."""
-    page = files("irregular_voice_google").joinpath("demo.html").read_bytes()
-    qs = questions.load_questions()
+    title = new_dialog(args).title
+    page = files("irregular_voice_google").joinpath("demo.html").read_text(encoding="utf-8")
+    page = page.replace("Flug buchen per Stimme", title).encode("utf-8")  # <title> and <h1>
     lock = threading.Lock()  # one conversation at a time
     state: dict = {}
 
@@ -353,7 +370,7 @@ def make_handler(args: argparse.Namespace, profile: Profile, token: str | None =
             body = self.rfile.read(length) if 0 < length <= MAX_UPLOAD_BYTES else b""
             with lock:
                 if path == "/api/start":
-                    state["ear"], state["dialog"] = Transcriber(args, profile), Dialog(qs)
+                    state["ear"], state["dialog"] = Transcriber(args, profile), new_dialog(args)
                     state["step"] = state["dialog"].start()
                     return self._json({"step": state["step"]})
                 if path not in ("/api/answer", "/api/choose"):
@@ -371,8 +388,7 @@ def make_handler(args: argparse.Namespace, profile: Profile, token: str | None =
                     state["step"] = step
                     ear.takes.append({"question": "choice", "tapped": value})
                     print(f"  getippt: {value!r}", flush=True)
-                    if step["listen"] is None:
-                        ear.save(dialog)
+                    ear.save(dialog)
                     return self._json({"step": step})
                 if body[:4] != b"RIFF" or body[8:12] != b"WAVE":
                     return self._json({"error": "keine WAV-Aufnahme"}, HTTPStatus.BAD_REQUEST)
@@ -380,13 +396,12 @@ def make_handler(args: argparse.Namespace, profile: Profile, token: str | None =
                 wav = ear.path(q)
                 wav.write_bytes(body)
                 try:
-                    decision = ear.hear(wav, q)
+                    decision = ear.hear(wav, q, dialog.decide)
                 except Exception as e:  # keep the page usable; the take stays on disk
                     print(f"  Fehler: {e!r}", flush=True)
                     return self._json({"error": "Transkription fehlgeschlagen"}, HTTPStatus.INTERNAL_SERVER_ERROR)
                 step = state["step"] = dialog.answer(decision)
-                if step["listen"] is None:
-                    ear.save(dialog)
+                ear.save(dialog)  # after every answer: the home dialog never ends
                 return self._json({"heard": ear.takes[-1], "step": step})
 
         def log_message(self, format, *args):
@@ -436,6 +451,8 @@ def main() -> None:
     parser.add_argument("--n", type=int, help="--compare only N random test clips")
     parser.add_argument("--snap", action="store_true", help="--compare: add the adapter with non-words snapped")
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--scenario", choices=["flight", "home"], default="flight",
+                        help="book a flight, or switch lights, blinds and heating at home")
     parser.add_argument("--web", action="store_true", help="local web page: mic button, spoken questions")
     parser.add_argument("--port", type=int, default=8766, help="--web port (bound to 127.0.0.1)")
     parser.add_argument("--lan", action="store_true", help="--web over HTTPS on the local network, for a phone")

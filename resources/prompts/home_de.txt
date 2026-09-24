@@ -1,0 +1,85 @@
+# Prompted recording list for home control by voice (German), for --scenario home:
+#   uv run ivg-record --prompts resources/prompts/home_de.txt
+# One utterance per line; record each at least twice across different days.
+# Mix: full commands, several commands in one breath, then the single words
+# asked for when a part is missing (rooms, devices, actions, choices).
+
+Licht im Flur an.
+Licht im Flur aus.
+Licht in der Küche an.
+Licht in der Küche aus.
+Licht im Bad an.
+Licht im Bad aus.
+Licht im Wohnzimmer an.
+Licht im Wohnzimmer aus.
+Licht im Schlafzimmer an.
+Licht im Schlafzimmer aus.
+Licht im Büro an.
+Licht im Büro aus.
+Licht im Garten an.
+Licht im Garten aus.
+Alle Lichter an.
+Alle Lichter aus.
+Stehlampe im Wohnzimmer an.
+Leselampe im Schlafzimmer aus.
+Deckenlicht in der Küche einschalten.
+Deckenlicht im Flur ausschalten.
+Heizung im Bad wärmer.
+Heizung im Wohnzimmer kälter.
+Heizung im Schlafzimmer aus.
+Heizung im Büro wärmer.
+Rollo im Wohnzimmer hoch.
+Rollo im Wohnzimmer runter.
+Rollo im Schlafzimmer hoch.
+Rollo im Schlafzimmer runter.
+Jalousie in der Küche zu.
+Jalousie im Büro auf.
+Alle Rollos runter.
+Musik in der Küche an.
+Musik in der Küche aus.
+Musik im Wohnzimmer leiser.
+Musik im Wohnzimmer lauter.
+Radio im Bad an.
+Fernseher im Wohnzimmer an.
+Fernseher im Wohnzimmer aus.
+Fernseher leiser.
+Licht im Flur an, Büro dunkel.
+Licht im Flur, Küche an.
+Licht im Wohnzimmer an und Rollo runter.
+Heizung im Bad wärmer und Licht an.
+Stehlampe start, Deckenlicht stopp.
+Rollo im Schlafzimmer hoch, dann Licht aus.
+Musik aus, Fernseher an.
+Alle Lichter aus und alle Rollos runter.
+Licht im Flur.
+Licht Wohnzimmer.
+Rollo runter.
+Heizung wärmer.
+Flur.
+Küche.
+Bad.
+Wohnzimmer.
+Schlafzimmer.
+Büro.
+Garten.
+Überall.
+Licht.
+Lampe.
+Heizung.
+Rollo.
+Musik.
+Fernseher.
+An.
+Aus.
+Hoch.
+Runter.
+Wärmer.
+Kälter.
+Lauter.
+Leiser.
+Eins.
+Zwei.
+Drei.
+Ja.
+Nein.
+Keins davon.

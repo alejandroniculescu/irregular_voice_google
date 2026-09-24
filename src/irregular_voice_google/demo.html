@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Flug per Stimme</title>
+<title>Flug buchen per Stimme</title>
 <style>
   :root {
     --bg: #f7f6f2; --fg: #1d1d1b; --muted: #6b6a66; --card: #ffffff; --line: #deddd8;
@@ -27,7 +27,13 @@
   .field.current { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent) inset; }
   .field.filled b { color: var(--ok); }
   @media (max-width: 560px) { .booking { grid-template-columns: 1fr 1fr; } }
-  #log { flex: 1 1 0; flex-shrink: 1; display: flex; flex-direction: column; gap: 10px; overflow-y: auto; min-height: 80px;
+  #house { display: flex; gap: 8px; overflow-x: auto; }
+  #house:empty { display: none; }
+  .room { flex-shrink: 0; white-space: nowrap; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 6px 10px; font-size: 15px; }
+  .room b { display: block; font-size: 13px; color: var(--muted); font-weight: 400; }
+  .room .on { color: var(--ok); font-weight: 600; } .room .off { color: var(--muted); }
+  .room .fresh { outline: 2px solid var(--accent); border-radius: 6px; padding: 0 3px; }
+  #log { flex: 1 1 0; flex-shrink: 1; display: flex; flex-direction: column; gap: 10px; overflow-y: auto; min-height: 60px;
          background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 14px; }
   .msg { max-width: 85%; padding: 10px 14px; border-radius: 14px; }
   .bot { align-self: flex-start; background: var(--bot); font-size: 22px; font-weight: 600; }
@@ -57,13 +63,9 @@
 </head>
 <body>
 <main>
-  <h1>Flug buchen per Stimme</h1>
-  <div class="booking">
-    <div class="field" id="f-destination"><span>Wohin</span><b>–</b></div>
-    <div class="field" id="f-origin"><span>Von wo</span><b>–</b></div>
-    <div class="field" id="f-date"><span>Wann</span><b>–</b></div>
-    <div class="field" id="f-airline"><span>Airline</span><b>–</b></div>
-  </div>
+  <h1 id="title">Flug buchen per Stimme</h1>
+  <div class="booking" id="fields"></div>
+  <div id="house" aria-label="Zuhause"></div>
   <section id="log" aria-live="polite"></section>
   <div id="choices" aria-label="Auswahl"></div>
   <div class="meter"><div id="level"></div></div>
@@ -137,14 +139,33 @@ function add(cls, html) {
 }
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
 
+// the fields come from the dialog: flight (Wohin, Von wo, …) or home (Gerät, Raum, Aktion)
+function showFields(s) {
+  $("title").textContent = document.title = s.title;
+  const box = $("fields");
+  box.style.gridTemplateColumns = s.fields.length === 3 ? "repeat(3, 1fr)" : "";
+  box.innerHTML = s.fields.map(([k, label]) => {
+    const v = s.booking[k];
+    return `<div class="field${v ? " filled" : ""}${k === s.asking ? " current" : ""}">`
+         + `<span>${esc(label)}</span><b>${esc(v || "–")}</b></div>`;
+  }).join("");
+}
+
+// home: each room with its devices' last state; what just changed is outlined
+let lastHouse = {};
+function showHouse(s) {
+  const house = s.house || {};
+  $("house").innerHTML = Object.entries(house).map(([room, devices]) =>
+    `<div class="room"><b>${esc(room)}</b>` + Object.entries(devices).map(([d, a]) =>
+      `<span class="${a === "aus" ? "off" : "on"}${lastHouse[room]?.[d] !== a ? " fresh" : ""}">`
+      + `${esc(d)} ${esc(a)}</span>`).join(" · ") + "</div>").join("");
+  lastHouse = house;
+}
+
 function show(s) {
   step = s;
-  for (const [k, v] of Object.entries(s.booking)) {
-    const f = $("f-" + k);
-    f.querySelector("b").textContent = v || "–";
-    f.classList.toggle("filled", !!v);
-    f.classList.toggle("current", k === s.asking);
-  }
+  showFields(s);
+  showHouse(s);
   add("bot", esc(s.say));
   speak(s.say);
   showChoices(s);
@@ -192,7 +213,7 @@ async function choose(value, label) {
 }
 
 async function start() {
-  $("log").innerHTML = ""; $("choices").innerHTML = "";
+  $("log").innerHTML = ""; $("choices").innerHTML = ""; lastHouse = {};
   keepAwake();
   try { show((await post("/api/start")).step); } catch (e) { setStatus("Fehler: " + e.message); }
 }
@@ -286,7 +307,7 @@ function micPressed() {
   try {
     const r = await fetch(api("/api/state"));
     const s = r.ok && (await r.json()).step;
-    if (s && s.listen !== null) { add("bot", "<small>(fortgesetzt)</small>"); show(s); keepAwake(); }
+    if (s && s.listen !== null) { lastHouse = s.house || {}; add("bot", "<small>(fortgesetzt)</small>"); show(s); keepAwake(); }
   } catch {}
 })();
 $("mic").onclick = micPressed;

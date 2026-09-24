@@ -230,6 +230,35 @@ muffling) and playback, the two transcripts with wrong words marked, and the
 overall WER. The page embeds the audio, so it is written to `data/demo/` and
 must stay there.
 
+### Home control (`--scenario home`)
+
+Booking a flight takes four answers and a readback. Home control is simpler:
+one sentence does something, and the page shows it at once.
+
+```bash
+uv run ivg-demo --web --scenario home --profile data/speakers/<name>/profile.json --model models/ggml/<adapter>-q5_0.bin
+```
+
+A command has three parts: device (Licht, Lampe, Heizung, Rollo, Musik,
+Fernseher), room and action. `resources/home_de.json` lists each part's values
+and synonyms, e.g. "dunkel" means "aus" and "Jalousie" means "Rollo".
+- One sentence can hold several commands. "Licht im Flur an, Büro dunkel"
+  switches two lights; a part left out is taken from the command before it.
+- Only words that are spelled out count, so an unrelated sentence does nothing
+  and is asked again.
+- A missing part is asked for on its own. "Rollo runter" gets "In welchem
+  Raum?". A missing action is offered as numbered choices that fit the device
+  ("eins: an, oder zwei: aus?").
+- In those one-word answers, sound-alikes and near misses count, as in the
+  flight dialog.
+- If Whisper is unsure of a sentence, it is read back first.
+- Each room shows its devices' last state.
+- The session log is saved after every answer.
+
+`resources/prompts/home_de.txt` is the matching recording list: commands,
+several commands in one breath, and the single words asked for when a part is
+missing. Record it with `uv run ivg-record --prompts resources/prompts/home_de.txt`.
+
 ### Snapping non-words to real words
 
 The adapter often hears the right sounds but writes a non-word: "geklabt" for
@@ -373,9 +402,11 @@ src/irregular_voice_google/
   ggml.py        # HF model / LoRA adapter -> whisper.cpp ggml
   cpp.py         # whisper.cpp backend (whisper-cli)
   demo.py        # live booking demo (terminal or --web: demo.html) + base-vs-adapter page (compare.html)
+  home.py        # home-control dialog for the demo (--scenario home)
 resources/
   lexicon/       # one <slot>.txt per slot
   questions_de.json  # booking questions: slots and carrier words
+  home_de.json   # home control: devices, rooms, actions and their synonyms
   speakers/example/  # profile format (real profiles live in data/speakers/)
   prompts/       # German recording prompts + lexicon story
 tests/

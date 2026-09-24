@@ -124,6 +124,7 @@ class Decision:
     action: str  # "accept", "confirm" ("Meinten Sie …?"), "choose" (up to three candidates) or "repeat"
     value: str | None = None
     candidates: list[str] = field(default_factory=list)
+    commands: list[dict] = field(default_factory=list)  # home control: the commands in a whole sentence
 
 
 def resolve(question: Question, text: str, min_p: float | None = None, threshold: float = 0.5,
