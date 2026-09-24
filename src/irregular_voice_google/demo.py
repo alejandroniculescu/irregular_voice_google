@@ -14,6 +14,10 @@ Every take is kept under ``data/demo/<timestamp>/`` (git-ignored) with its
 transcript, so demo sessions can become training data later (with consent).
 macOS only (``say``, ffmpeg's avfoundation input).
 
+``--web`` runs the same dialog as a local page (http://localhost:8766, bound
+to 127.0.0.1): the browser speaks the questions (German system voice) and
+records with a big mic button; this machine transcribes and decides.
+
 ``--compare`` instead writes a local page (under ``--out``, git-ignored) with
 the speaker's held-out test clips: waveform, spectrogram, playback and the base
 model's transcript next to the adapter's, wrong words marked:
@@ -30,10 +34,14 @@ import json
 import re
 import subprocess
 import random
+import threading
 import time
 from datetime import datetime
+from http import HTTPStatus
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.resources import files
 from pathlib import Path
+from urllib.parse import urlparse
 
 from irregular_voice_google import cpp, questions, snap
 import jiwer
@@ -42,6 +50,7 @@ from irregular_voice_google.guard import guard
 from irregular_voice_google.manifest import load_manifest
 from irregular_voice_google.preprocess import SAMPLE_RATE, load
 from irregular_voice_google.profile import Profile, load_profile
+from irregular_voice_google.recorder import MAX_UPLOAD_BYTES
 from irregular_voice_google.text import normalize
 
 FLOW = ["destination", "origin", "date", "airline"]
@@ -103,27 +112,83 @@ def compare(args: argparse.Namespace) -> None:
     subprocess.run(["open", str(out)])
 
 
-class Session:
+YES = {"ja", "richtig", "ja, richtig", "bestätigen"}
+
+
+def is_yes(d: questions.Decision) -> bool:
+    return d.action != "repeat" and d.value in YES
+
+
+class Dialog:
+    """The booking conversation as a state machine, shared by the terminal and the web page.
+
+    Each step says what to speak and which question the next answer belongs to
+    (``listen``; None once the dialog is done). ``answer`` takes the decision
+    for that answer: accept moves on, confirm asks "Meinten Sie …?", repeat
+    asks again; after ``MAX_TRIES`` a question is left empty.
+    """
+
+    def __init__(self, qs: dict[str, questions.Question]):
+        self.questions = qs
+        self.booking: dict[str, str | None] = dict.fromkeys(FLOW)
+        self.i, self.tries, self.pending, self.phase = 0, 0, None, "ask"  # ask | confirm | final | done
+        self.confirmed: bool | None = None
+
+    def step(self, say: str) -> dict:
+        listen = {"ask": FLOW[self.i] if self.i < len(FLOW) else None, "confirm": "confirm",
+                  "final": "confirm", "done": None}[self.phase]
+        asking = FLOW[self.i] if self.phase in ("ask", "confirm") else None
+        return {"say": say, "listen": listen, "asking": asking, "phase": self.phase, "booking": dict(self.booking),
+                "confirmed": self.confirmed}
+
+    def start(self) -> dict:
+        return self.step(self.questions[FLOW[0]].ask)
+
+    def summary(self) -> str:
+        b = {k: v or "?" for k, v in self.booking.items()}
+        return f"Ein Flug von {b['origin']} nach {b['destination']}, am {b['date']}, mit {b['airline']}."
+
+    def answer(self, d: questions.Decision) -> dict:
+        if self.phase == "done":
+            raise ValueError("dialog is done")
+        if self.phase == "final":
+            self.confirmed, self.phase = is_yes(d), "done"
+            return self.step("Vielen Dank, Ihr Flug ist gebucht." if self.confirmed
+                             else "Gut, dann fangen wir noch einmal an.")
+        if self.phase == "ask" and d.action == "accept":
+            return self._next(d.value)
+        if self.phase == "ask" and d.action == "confirm":
+            self.phase, self.pending = "confirm", d.value
+            return self.step(f"Meinten Sie {d.value}?")
+        if self.phase == "confirm" and is_yes(d):
+            return self._next(self.pending)
+        self.phase, self.tries = "ask", self.tries + 1
+        if self.tries < MAX_TRIES:
+            return self.step("Entschuldigung, bitte noch einmal.")
+        return self._next(None, "Entschuldigung, das überspringen wir. ")
+
+    def _next(self, value: str | None, prefix: str = "") -> dict:
+        self.booking[FLOW[self.i]] = value
+        self.i, self.tries, self.pending, self.phase = self.i + 1, 0, None, "ask"
+        if self.i < len(FLOW):
+            return self.step(prefix + self.questions[FLOW[self.i]].ask)
+        self.phase = "final"
+        return self.step(prefix + self.summary() + " Ist das richtig?")
+
+
+class Transcriber:
+    """Transcribes answers with whisper.cpp and logs every take under ``data/demo/<timestamp>/``."""
+
     def __init__(self, args: argparse.Namespace, profile: Profile):
         self.args, self.profile = args, profile
-        self.questions = questions.load_questions()
         self.out = Path(args.out) / f"{datetime.now():%Y%m%d-%H%M%S}"
         self.out.mkdir(parents=True, exist_ok=True)
         self.takes: list[dict] = []
 
-    def say(self, text: str) -> None:
-        print(f"\n» {text}")
-        if self.args.say:
-            subprocess.run(["say", "-v", self.args.voice, text])
+    def path(self, q: questions.Question) -> Path:
+        return self.out / f"{len(self.takes) + 1:03d}-{q.name}.wav"
 
-    def listen(self, q: questions.Question) -> questions.Decision:
-        wav = self.out / f"{len(self.takes) + 1:03d}-{q.name}.wav"
-        if self.args.wav is not None:  # replay files instead of the microphone (testing)
-            if not self.args.wav:
-                raise SystemExit("keine --wav Dateien mehr")
-            wav = Path(self.args.wav.pop(0))
-        else:
-            record(wav, self.args.mic)
+    def hear(self, wav: Path, q: questions.Question) -> questions.Decision:
         audio = load(wav, self.profile.preprocess)
         seconds = len(audio) / SAMPLE_RATE
         start = time.perf_counter()
@@ -139,43 +204,122 @@ class Session:
             decision.value = f"{day[1]}. {decision.value}"  # keep the day for the readback
         print(f"  gehört: {text!r}  (min_p {result.min_p:.2f}, {time.perf_counter() - start:.1f}s)"
               f"  -> {decision.action.upper()}" + (f" {decision.value}" if decision.value else "")
-              + (f"  [guard: {flag}]" if flag else ""))
+              + (f"  [guard: {flag}]" if flag else ""), flush=True)
         self.takes.append({"audio": wav.name, "question": q.name, "text": text, "min_p": round(result.min_p, 3),
                            "action": decision.action, "value": decision.value, "guard": flag})
         return decision
 
-    def yes(self) -> bool | None:
-        d = self.listen(self.questions["confirm"])
-        if d.action == "repeat" or d.value is None:
-            return None
-        return d.value in {"ja", "richtig", "ja, richtig", "bestätigen"}
+    def save(self, dialog: Dialog) -> None:
+        (self.out / "session.json").write_text(json.dumps(
+            {"model": str(self.args.model), "booking": dialog.booking, "confirmed": dialog.confirmed,
+             "takes": self.takes}, indent=2, ensure_ascii=False), encoding="utf-8")
+        (self.out / "last.wav").unlink(missing_ok=True)
 
-    def ask(self, name: str) -> str | None:
-        q = self.questions[name]
-        self.say(q.ask)
-        for _ in range(MAX_TRIES):
-            d = self.listen(q)
-            if d.action == "accept":
-                return d.value
-            if d.action == "confirm":
-                self.say(f"Meinten Sie {d.value}?")
-                if self.yes():
-                    return d.value
-            self.say("Entschuldigung, bitte noch einmal.")
-        return None
+
+class Session:
+    """The dialog in the terminal: macOS ``say`` and the microphone via ffmpeg."""
+
+    def __init__(self, args: argparse.Namespace, profile: Profile):
+        self.args = args
+        self.ear = Transcriber(args, profile)
+        self.dialog = Dialog(questions.load_questions())
+
+    def say(self, text: str) -> None:
+        print(f"\n» {text}")
+        if self.args.say:
+            subprocess.run(["say", "-v", self.args.voice, text])
+
+    def listen(self, q: questions.Question) -> questions.Decision:
+        wav = self.ear.path(q)
+        if self.args.wav is not None:  # replay files instead of the microphone (testing)
+            if not self.args.wav:
+                raise SystemExit("keine --wav Dateien mehr")
+            wav = Path(self.args.wav.pop(0))
+        else:
+            record(wav, self.args.mic)
+        return self.ear.hear(wav, q)
 
     def run(self) -> None:
-        booking = {name: self.ask(name) for name in FLOW}
-        summary = (f"Ein Flug von {booking['origin'] or '?'} nach {booking['destination'] or '?'}, "
-                   f"am {booking['date'] or '?'}, mit {booking['airline'] or '?'}.")
-        self.say(summary + " Ist das richtig?")
-        confirmed = self.yes()
-        self.say("Vielen Dank, Ihr Flug ist gebucht." if confirmed else "Gut, dann fangen wir noch einmal an.")
-        (self.out / "session.json").write_text(json.dumps(
-            {"model": str(self.args.model), "booking": booking, "confirmed": confirmed, "takes": self.takes},
-            indent=2, ensure_ascii=False), encoding="utf-8")
-        (self.out / "last.wav").unlink(missing_ok=True)
-        print(f"\nAufnahmen und Protokoll: {self.out}")
+        step = self.dialog.start()
+        while True:
+            self.say(step["say"])
+            if step["listen"] is None:
+                break
+            step = self.dialog.answer(self.listen(self.dialog.questions[step["listen"]]))
+        self.ear.save(self.dialog)
+        print(f"\nAufnahmen und Protokoll: {self.ear.out}")
+
+
+def make_handler(args: argparse.Namespace, profile: Profile):
+    """Local web demo: the page speaks (browser TTS) and records; this side transcribes and decides."""
+    page = files("irregular_voice_google").joinpath("demo.html").read_bytes()
+    qs = questions.load_questions()
+    lock = threading.Lock()  # one conversation at a time
+    state: dict = {}
+
+    class Handler(BaseHTTPRequestHandler):
+        def _json(self, obj, status=HTTPStatus.OK):
+            body = json.dumps(obj, ensure_ascii=False).encode()
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_GET(self):
+            if urlparse(self.path).path != "/":
+                return self.send_error(HTTPStatus.NOT_FOUND)
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(page)))
+            self.end_headers()
+            self.wfile.write(page)
+
+        def do_POST(self):
+            path = urlparse(self.path).path
+            length = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(length) if 0 < length <= MAX_UPLOAD_BYTES else b""
+            with lock:
+                if path == "/api/start":
+                    state["ear"], state["dialog"] = Transcriber(args, profile), Dialog(qs)
+                    return self._json({"step": state["dialog"].start()})
+                if path != "/api/answer":
+                    return self.send_error(HTTPStatus.NOT_FOUND)
+                dialog = state.get("dialog")
+                if dialog is None or dialog.phase == "done":
+                    return self._json({"error": "kein Gespräch aktiv"}, HTTPStatus.CONFLICT)
+                if body[:4] != b"RIFF" or body[8:12] != b"WAVE":
+                    return self._json({"error": "keine WAV-Aufnahme"}, HTTPStatus.BAD_REQUEST)
+                ear = state["ear"]
+                q = qs[dialog.step("")["listen"]]
+                wav = ear.path(q)
+                wav.write_bytes(body)
+                try:
+                    decision = ear.hear(wav, q)
+                except Exception as e:  # keep the page usable; the take stays on disk
+                    print(f"  Fehler: {e!r}", flush=True)
+                    return self._json({"error": "Transkription fehlgeschlagen"}, HTTPStatus.INTERNAL_SERVER_ERROR)
+                step = dialog.answer(decision)
+                if step["listen"] is None:
+                    ear.save(dialog)
+                return self._json({"heard": ear.takes[-1], "step": step})
+
+        def log_message(self, format, *args):
+            pass
+
+    return Handler
+
+
+def serve(args: argparse.Namespace, profile: Profile) -> None:
+    server = ThreadingHTTPServer(("127.0.0.1", args.port), make_handler(args, profile))
+    url = f"http://localhost:{args.port}/"
+    print(f"Web-Demo: {url}  (nur auf diesem Mac; Strg+C beendet)")
+    subprocess.run(["open", url])
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
 
 
 def main() -> None:
@@ -198,6 +342,8 @@ def main() -> None:
     parser.add_argument("--n", type=int, help="--compare only N random test clips")
     parser.add_argument("--snap", action="store_true", help="--compare: add the adapter with non-words snapped")
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--web", action="store_true", help="local web page: mic button, spoken questions")
+    parser.add_argument("--port", type=int, default=8766, help="--web port (bound to 127.0.0.1)")
     args = parser.parse_args()
     if args.list_mics:
         return list_mics()
@@ -207,4 +353,7 @@ def main() -> None:
         parser.error("whisper-cli not found (brew install whisper-cpp)")
     if args.compare:
         return compare(args)
-    Session(args, load_profile(args.profile) if args.profile else Profile(speaker="demo")).run()
+    profile = load_profile(args.profile) if args.profile else Profile(speaker="demo")
+    if args.web:
+        return serve(args, profile)
+    Session(args, profile).run()

@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Flug per Stimme</title>
+<style>
+  :root {
+    --bg: #f7f6f2; --fg: #1d1d1b; --muted: #6b6a66; --card: #ffffff; --line: #deddd8;
+    --rec: #c62828; --ok: #2e7d32; --warn: #b26a00; --accent: #1f5fa8; --bot: #eef3fa;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #161615; --fg: #efeee9; --muted: #a09f99; --card: #22221f; --line: #3a3935;
+            --rec: #ef5350; --ok: #66bb6a; --warn: #ffb74d; --accent: #6ea8ff; --bot: #1d2533; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+         font: 18px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 760px; margin: 0 auto; padding: 16px; min-height: 100svh;
+         display: flex; flex-direction: column; gap: 14px; }
+  h1 { font-size: 22px; margin: 4px 0 0; }
+  .booking { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+  .field { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; min-width: 0; }
+  .field span { display: block; color: var(--muted); font-size: 13px; }
+  .field b { display: block; font-size: 19px; overflow-wrap: anywhere; }
+  .field.current { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent) inset; }
+  .field.filled b { color: var(--ok); }
+  @media (max-width: 560px) { .booking { grid-template-columns: 1fr 1fr; } }
+  #log { flex: 1; display: flex; flex-direction: column; gap: 10px; overflow-y: auto; min-height: 200px;
+         background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 14px; }
+  .msg { max-width: 85%; padding: 10px 14px; border-radius: 14px; }
+  .bot { align-self: flex-start; background: var(--bot); font-size: 22px; font-weight: 600; }
+  .me { align-self: flex-end; border: 1px solid var(--line); }
+  .me q { font-size: 20px; }
+  .tag { display: block; font-size: 14px; margin-top: 4px; color: var(--muted); }
+  .tag.accept { color: var(--ok); } .tag.confirm { color: var(--warn); } .tag.repeat { color: var(--rec); }
+  #status { text-align: center; min-height: 1.4em; color: var(--muted); }
+  .meter { height: 8px; background: var(--line); border-radius: 4px; overflow: hidden; }
+  .meter > div { height: 100%; width: 0; background: var(--accent); }
+  .controls { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  button { font: inherit; font-size: 20px; font-weight: 600; padding: 16px 12px; border-radius: 14px;
+           border: 2px solid var(--line); background: var(--card); color: var(--fg); cursor: pointer; min-height: 60px; }
+  button:disabled { opacity: .35; cursor: default; }
+  #mic { grid-column: 1 / -1; background: var(--rec); border-color: var(--rec); color: #fff; font-size: 26px; min-height: 96px; }
+  #mic.recording { animation: pulse 1.2s infinite; }
+  #mic.start { background: var(--accent); border-color: var(--accent); }
+  @keyframes pulse { 50% { opacity: .7; } }
+  .hint { color: var(--muted); font-size: 14px; text-align: center; margin: 0; }
+  @media (pointer: coarse) { .hint { display: none; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>Flug buchen per Stimme</h1>
+  <div class="booking">
+    <div class="field" id="f-destination"><span>Wohin</span><b>–</b></div>
+    <div class="field" id="f-origin"><span>Von wo</span><b>–</b></div>
+    <div class="field" id="f-date"><span>Wann</span><b>–</b></div>
+    <div class="field" id="f-airline"><span>Airline</span><b>–</b></div>
+  </div>
+  <section id="log" aria-live="polite"></section>
+  <div class="meter"><div id="level"></div></div>
+  <div id="status">Mikrofon und Lautsprecher bereit? Dann „Start“ drücken.</div>
+  <div class="controls">
+    <button id="mic" class="start">▶ Start</button>
+    <button id="again" disabled>🔊 Frage wiederholen</button>
+    <button id="restart">↺ Neu beginnen</button>
+  </div>
+  <p class="hint">Leertaste: Aufnahme starten/stoppen</p>
+</main>
+<script>
+const MAX_SECONDS = 20;
+const $ = (id) => document.getElementById(id);
+const LABELS = { accept: "✓ verstanden", confirm: "? nachfragen", repeat: "↺ nochmal" };
+
+let step = null, busy = false;
+let ctx = null, stream = null, node = null, chunks = [], recording = false, startedAt = 0, tick = null;
+
+// --- speech out: the browser's German voice ---
+let voice = null;
+function pickVoice() {
+  const de = speechSynthesis.getVoices().filter(v => v.lang.toLowerCase().startsWith("de"));
+  voice = de.find(v => /anna/i.test(v.name)) || de.find(v => v.localService) || de[0] || null;
+}
+pickVoice(); speechSynthesis.onvoiceschanged = pickVoice;
+function speak(text) {
+  speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(text);
+  u.lang = "de-DE"; u.rate = 0.9; if (voice) u.voice = voice;
+  speechSynthesis.speak(u);
+}
+
+// --- conversation ---
+function setStatus(text) { $("status").textContent = text; }
+function add(cls, html) {
+  const el = document.createElement("div");
+  el.className = "msg " + cls; el.innerHTML = html;
+  $("log").appendChild(el); el.scrollIntoView({ block: "end", behavior: "smooth" });
+}
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+
+function show(s) {
+  step = s;
+  for (const [k, v] of Object.entries(s.booking)) {
+    const f = $("f-" + k);
+    f.querySelector("b").textContent = v || "–";
+    f.classList.toggle("filled", !!v);
+    f.classList.toggle("current", k === s.asking);
+  }
+  add("bot", esc(s.say));
+  speak(s.say);
+  $("again").disabled = false;
+  const done = s.listen === null;
+  $("mic").disabled = done; $("mic").classList.remove("start");
+  $("mic").textContent = "● Antworten";
+  setStatus(done ? (s.confirmed ? "Gebucht. „Neu beginnen“ für einen weiteren Flug." : "„Neu beginnen“ drücken.")
+                 : "Mikrofon drücken und antworten.");
+}
+
+async function start() {
+  $("log").innerHTML = "";
+  const r = await fetch("/api/start", { method: "POST" });
+  show((await r.json()).step);
+}
+
+// --- microphone ---
+async function startRecording() {
+  if (!ctx) {
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: { channelCount: 1, echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+    });
+    ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const source = ctx.createMediaStreamSource(stream);
+    node = ctx.createScriptProcessor(4096, 1, 1);
+    const mute = ctx.createGain(); mute.gain.value = 0;
+    source.connect(node); node.connect(mute); mute.connect(ctx.destination);
+    node.onaudioprocess = (e) => {
+      const data = e.inputBuffer.getChannelData(0);
+      let sum = 0; for (let i = 0; i < data.length; i++) sum += data[i] * data[i];
+      $("level").style.width = Math.min(100, Math.sqrt(sum / data.length) * 400) + "%";
+      if (recording) chunks.push(new Float32Array(data));
+    };
+  }
+  speechSynthesis.cancel();
+  await ctx.resume();
+  chunks = []; recording = true; startedAt = Date.now();
+  $("mic").textContent = "■ Fertig"; $("mic").classList.add("recording");
+  setStatus("Ich höre zu …");
+  tick = setInterval(() => {
+    const s = (Date.now() - startedAt) / 1000;
+    setStatus(`Ich höre zu … ${s.toFixed(0)} s`);
+    if (s >= MAX_SECONDS) stopRecording();
+  }, 250);
+}
+
+async function stopRecording() {
+  recording = false; clearInterval(tick);
+  $("mic").classList.remove("recording"); $("level").style.width = "0";
+  const length = chunks.reduce((n, c) => n + c.length, 0);
+  if (length < ctx.sampleRate * 0.3) {
+    $("mic").textContent = "● Antworten";
+    return setStatus("Zu kurz – bitte noch einmal.");
+  }
+  const samples = new Float32Array(length);
+  let offset = 0; for (const c of chunks) { samples.set(c, offset); offset += c.length; }
+  busy = true; $("mic").disabled = true; $("mic").textContent = "… verstehe";
+  setStatus("Whisper transkribiert …");
+  try {
+    const r = await fetch("/api/answer", { method: "POST", body: encodeWav(samples, ctx.sampleRate),
+                                           headers: { "Content-Type": "audio/wav" } });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || r.status);
+    const h = data.heard;
+    add("me", `<q>${esc(h.text) || "…"}</q><span class="tag ${h.action}">${LABELS[h.action]}`
+              + (h.value ? ` → ${esc(h.value)}` : "") + (h.guard ? ` (${esc(h.guard)})` : "")
+              + ` · Sicherheit ${Math.round(h.min_p * 100)} %</span>`);
+    show(data.step);
+  } catch (e) {
+    setStatus("Fehler: " + e.message); $("mic").disabled = false; $("mic").textContent = "● Antworten";
+  } finally { busy = false; }
+}
+
+function encodeWav(samples, rate) {
+  const buffer = new ArrayBuffer(44 + samples.length * 2), v = new DataView(buffer);
+  const str = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+  str(0, "RIFF"); v.setUint32(4, 36 + samples.length * 2, true); str(8, "WAVE");
+  str(12, "fmt "); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+  str(36, "data"); v.setUint32(40, samples.length * 2, true);
+  for (let i = 0; i < samples.length; i++) {
+    const s = Math.max(-1, Math.min(1, samples[i]));
+    v.setInt16(44 + i * 2, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+  }
+  return new Blob([buffer], { type: "audio/wav" });
+}
+
+function micPressed() {
+  if (busy || $("mic").disabled) return;
+  if (!step) return start();
+  recording ? stopRecording() : startRecording().catch(e => setStatus("Mikrofon: " + e.message));
+}
+$("mic").onclick = micPressed;
+$("again").onclick = () => step && speak(step.say);
+$("restart").onclick = () => { if (!busy) { recording = false; clearInterval(tick); start(); } };
+document.addEventListener("keydown", (e) => {
+  if (e.code !== "Space" || e.repeat) return;
+  e.preventDefault(); document.activeElement?.blur?.();  // no second click from a focused button
+  micPressed();
+});
+</script>
+</body>
+</html>

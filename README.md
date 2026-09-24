@@ -179,6 +179,20 @@ prompt or grammar, and with the grammar on it misheard clear answers
 `--grammar` turn them back on. `--wav a.wav b.wav …` replays files instead of
 the microphone, for a dry run.
 
+### Web version
+
+```bash
+uv run ivg-demo --web --profile data/speakers/<id>/profile.json \
+  --model models/ggml/<adapter>-q5_0.bin
+```
+
+Opens http://localhost:8766 (bound to 127.0.0.1, so only this Mac can reach it).
+The dialogue is the same as in the terminal (`Dialog` in `demo.py` is shared by
+both). The browser speaks each question with its German voice, and a big mic
+button (or the space bar) records the answer. The page shows what Whisper
+heard, the decision (understood, "Meinten Sie …?" or again) and the booking
+filling in. Takes and `session.json` go to `data/demo/<timestamp>/` as before.
+
 ```bash
 uv run ivg-demo --compare --model models/ggml/<adapter>-q5_0.bin
 ```
@@ -332,7 +346,7 @@ src/irregular_voice_google/
   llmfix.py      # experiment: local LLM word fixes, gated by sound
   ggml.py        # HF model / LoRA adapter -> whisper.cpp ggml
   cpp.py         # whisper.cpp backend (whisper-cli)
-  demo.py        # live booking demo + base-vs-adapter page (compare.html)
+  demo.py        # live booking demo (terminal or --web: demo.html) + base-vs-adapter page (compare.html)
 resources/
   lexicon/       # one <slot>.txt per slot
   questions_de.json  # booking questions: slots and carrier words
