@@ -16,8 +16,9 @@
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--fg);
          font: 18px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
-  main { max-width: 760px; margin: 0 auto; padding: 16px; min-height: 100svh;
+  main { max-width: 760px; margin: 0 auto; padding: 16px; height: 100svh;
          display: flex; flex-direction: column; gap: 14px; }
+  main > * { flex-shrink: 0; }
   h1 { font-size: 22px; margin: 4px 0 0; }
   .booking { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
   .field { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; min-width: 0; }
@@ -26,14 +27,19 @@
   .field.current { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent) inset; }
   .field.filled b { color: var(--ok); }
   @media (max-width: 560px) { .booking { grid-template-columns: 1fr 1fr; } }
-  #log { flex: 1; display: flex; flex-direction: column; gap: 10px; overflow-y: auto; min-height: 200px;
+  #log { flex: 1 1 0; flex-shrink: 1; display: flex; flex-direction: column; gap: 10px; overflow-y: auto; min-height: 80px;
          background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 14px; }
   .msg { max-width: 85%; padding: 10px 14px; border-radius: 14px; }
   .bot { align-self: flex-start; background: var(--bot); font-size: 22px; font-weight: 600; }
   .me { align-self: flex-end; border: 1px solid var(--line); }
   .me q { font-size: 20px; }
   .tag { display: block; font-size: 14px; margin-top: 4px; color: var(--muted); }
-  .tag.accept { color: var(--ok); } .tag.confirm { color: var(--warn); } .tag.repeat { color: var(--rec); }
+  .tag.accept { color: var(--ok); } .tag.confirm, .tag.choose { color: var(--warn); } .tag.repeat { color: var(--rec); }
+  #choices { display: grid; gap: 10px; }
+  #choices:empty { display: none; }
+  #choices button { text-align: left; font-size: 24px; min-height: 64px; padding: 10px 14px; border-color: var(--accent); }
+  #choices button .n { display: inline-block; min-width: 1.6em; color: var(--accent); }
+  #choices button.no { border-color: var(--line); font-size: 20px; min-height: 60px; color: var(--muted); }
   #status { text-align: center; min-height: 1.4em; color: var(--muted); }
   .meter { height: 8px; background: var(--line); border-radius: 4px; overflow: hidden; }
   .meter > div { height: 100%; width: 0; background: var(--accent); }
@@ -59,6 +65,7 @@
     <div class="field" id="f-airline"><span>Airline</span><b>–</b></div>
   </div>
   <section id="log" aria-live="polite"></section>
+  <div id="choices" aria-label="Auswahl"></div>
   <div class="meter"><div id="level"></div></div>
   <div id="status">Mikrofon und Lautsprecher bereit? Dann „Start“ drücken.</div>
   <div class="controls">
@@ -73,7 +80,7 @@ const MAX_SECONDS = 20;
 const $ = (id) => document.getElementById(id);
 const token = new URLSearchParams(location.search).get("token");
 const api = (path) => path + (token ? "?token=" + encodeURIComponent(token) : "");
-const LABELS = { accept: "✓ verstanden", confirm: "? nachfragen", repeat: "↺ nochmal" };
+const LABELS = { accept: "✓ verstanden", confirm: "? nachfragen", choose: "? Auswahl", repeat: "↺ nochmal" };
 
 let step = null, busy = false;
 let ctx = null, stream = null, node = null, chunks = [], recording = false, startedAt = 0, tick = null;
@@ -111,16 +118,55 @@ function show(s) {
   }
   add("bot", esc(s.say));
   speak(s.say);
+  showChoices(s);
+  $("log").scrollTop = $("log").scrollHeight;
   $("again").disabled = false;
   const done = s.listen === null;
   $("mic").disabled = done; $("mic").classList.remove("start");
   $("mic").textContent = "● Antworten";
   setStatus(done ? (s.confirmed ? "Gebucht. „Neu beginnen“ für einen weiteren Flug." : "„Neu beginnen“ drücken.")
+                 : s.choices.length > 1 ? "Antippen oder sagen: Name oder „eins“ … „drei“."
+                 : s.phase !== "ask" ? "Antippen oder „ja“ / „nein“ sagen."
                  : "Mikrofon drücken und antworten.");
 }
 
+// --- options to tap (they can also be said: the name, its number, ja / nein) ---
+function showChoices(s) {
+  const box = $("choices"); box.innerHTML = "";
+  const button = (html, value, cls = "") => {
+    const b = document.createElement("button");
+    b.innerHTML = html; b.className = cls; b.onclick = () => choose(value, b.textContent);
+    box.appendChild(b);
+  };
+  if (s.phase === "final") {
+    button("✓ Ja, buchen", "ja"); button("✗ Nein", null, "no");
+  } else if (s.choices.length === 1) {
+    button(`✓ Ja, ${esc(s.choices[0])}`, s.choices[0]); button("✗ Nein", null, "no");
+  } else if (s.choices.length) {
+    s.choices.forEach((c, i) => button(`<span class="n">${i + 1}</span> ${esc(c)}`, c));
+    button("✗ Keins davon", null, "no");
+  }
+}
+
+async function choose(value, label) {
+  if (busy || recording) return;
+  busy = true; speechSynthesis.cancel();
+  for (const b of $("choices").children) b.disabled = true;
+  try {
+    const r = await fetch(api("/api/choose"), { method: "POST", body: JSON.stringify({ value }),
+                                                headers: { "Content-Type": "application/json" } });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || r.status);
+    add("me", `<q>${esc(label.trim())}</q><span class="tag accept">👆 getippt</span>`);
+    show(data.step);
+  } catch (e) {
+    setStatus("Fehler: " + e.message);
+    for (const b of $("choices").children) b.disabled = false;
+  } finally { busy = false; }
+}
+
 async function start() {
-  $("log").innerHTML = "";
+  $("log").innerHTML = ""; $("choices").innerHTML = "";
   const r = await fetch(api("/api/start"), { method: "POST" });
   show((await r.json()).step);
 }

@@ -1,5 +1,5 @@
 from irregular_voice_google.profile import Profile
-from irregular_voice_google.questions import Question, grammar, load_questions, match, prompt, resolve
+from irregular_voice_google.questions import Question, grammar, load_questions, match, prompt, resolve, suggest
 
 
 def test_questions_load_values_from_lexicon():
@@ -49,7 +49,16 @@ def test_resolve_confirms_a_sound_alike():
     assert resolve(q, "Mit Luftansa.").value == "Lufthansa"
 
 
-def test_resolve_repeats_when_sound_alikes_are_ambiguous():
+def test_resolve_offers_a_choice_when_sound_alikes_are_ambiguous():
     q = Question("s", "Was?", ["einschalten", "ausschalten", "aushalten"])
     d = resolve(q, "Ausalten")
-    assert d.action == "repeat" and set(d.candidates) == {"ausschalten", "aushalten"}
+    assert d.action == "choose" and d.value is None and d.candidates[:2] == ["ausschalten", "aushalten"]
+
+
+def test_suggest_ranks_near_misses_and_skips_noise():
+    qs = load_questions()
+    assert suggest(qs["destination"], "Nach Bärlin")[0] == "Berlin"
+    assert suggest(qs["date"], "Modien.")[0] == "morgen"
+    assert suggest(qs["destination"], "Buch, eins, Jungen, Kron. Klinikamera, Übernichtung.") == []
+    d = resolve(qs["origin"], "Von Münchn", min_p=0.9)
+    assert (d.action, d.value) == ("confirm", "München")

@@ -193,6 +193,16 @@ button (or the space bar) records the answer. The page shows what Whisper
 heard, the decision (understood, "Meinten Sie …?" or again) and the booking
 filling in. Takes and `session.json` go to `data/demo/<timestamp>/` as before.
 
+When an answer is not a clear value, the page offers up to three candidates:
+sound-alikes by Kölner Phonetik and near misses ranked by the voicing-aware
+edit distance from `snap.py` (`questions.suggest`: "Bärlin" → Berlin,
+"Modien" → morgen). The carrier words ("von", "nach", "bitte") are dropped
+first, so "von" cannot sound like "Wien". Nothing is booked until the speaker
+picks one. He can tap a big button, say the name, say its number ("eins",
+"zwei", "drei"), or say "ja" when there is only one candidate. "Nein" or
+"keins davon" asks the question again. The readback at the end has "Ja, buchen"
+and "Nein" buttons as well.
+
 On a phone, the Mac still does the transcribing: `--web --lan` serves the
 page over HTTPS on the local network (self-signed certificate, random token in
 the printed URL); open it on a phone on the same Wi-Fi and accept the warning.

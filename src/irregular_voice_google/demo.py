@@ -117,10 +117,14 @@ def compare(args: argparse.Namespace) -> None:
 
 
 YES = {"ja", "richtig", "ja, richtig", "bestätigen"}
+NUMBERS = {"eins": 0, "erste": 0, "ersten": 0, "zwei": 1, "zwo": 1, "zweite": 1, "zweiten": 1,
+           "drei": 2, "dritte": 2, "dritten": 2}
+NO = ["nein", "falsch", "nein, falsch", "keins", "keine", "keins davon", "abbrechen", "wiederholen"]
+ORDINAL = ["eins", "zwei", "drei"]
 
 
 def is_yes(d: questions.Decision) -> bool:
-    return d.action != "repeat" and d.value in YES
+    return d.action in ("accept", "confirm") and d.value in YES
 
 
 class Dialog:
@@ -128,22 +132,32 @@ class Dialog:
 
     Each step says what to speak and which question the next answer belongs to
     (``listen``; None once the dialog is done). ``answer`` takes the decision
-    for that answer: accept moves on, confirm asks "Meinten Sie …?", repeat
-    asks again; after ``MAX_TRIES`` a question is left empty.
+    for that answer: accept moves on; confirm or choose offers one to three
+    ``choices`` ("Meinten Sie eins: Berlin, zwei: Bern, oder drei: Bremen?"),
+    picked by naming one, its number, ja (for a single one) or a tap
+    (``choose``); repeat asks again. After ``MAX_TRIES`` a question is left empty.
     """
 
     def __init__(self, qs: dict[str, questions.Question]):
         self.questions = qs
         self.booking: dict[str, str | None] = dict.fromkeys(FLOW)
-        self.i, self.tries, self.pending, self.phase = 0, 0, None, "ask"  # ask | confirm | final | done
+        self.i, self.tries, self.phase = 0, 0, "ask"  # ask | confirm | final | done
+        self.choices: list[str] = []
         self.confirmed: bool | None = None
 
+    def question(self, name: str) -> questions.Question:
+        """The question an answer is heard against; "choice" is ja/nein, the numbers and the offered values."""
+        if name != "choice":
+            return self.questions[name]
+        values = [*YES, *NO, *NUMBERS, *self.choices]
+        return questions.Question("choice", "", list(dict.fromkeys(values)), after=["bitte"])
+
     def step(self, say: str) -> dict:
-        listen = {"ask": FLOW[self.i] if self.i < len(FLOW) else None, "confirm": "confirm",
-                  "final": "confirm", "done": None}[self.phase]
+        listen = {"ask": FLOW[self.i] if self.i < len(FLOW) else None, "confirm": "choice",
+                  "final": "choice", "done": None}[self.phase]
         asking = FLOW[self.i] if self.phase in ("ask", "confirm") else None
         return {"say": say, "listen": listen, "asking": asking, "phase": self.phase, "booking": dict(self.booking),
-                "confirmed": self.confirmed}
+                "choices": list(self.choices), "confirmed": self.confirmed}
 
     def start(self) -> dict:
         return self.step(self.questions[FLOW[0]].ask)
@@ -152,28 +166,61 @@ class Dialog:
         b = {k: v or "?" for k, v in self.booking.items()}
         return f"Ein Flug von {b['origin']} nach {b['destination']}, am {b['date']}, mit {b['airline']}."
 
+    def offer(self, choices: list[str]) -> dict:
+        self.phase, self.choices = "confirm", choices[:3]
+        if len(self.choices) == 1:
+            return self.step(f"Meinten Sie {self.choices[0]}?")
+        named = [f"{n}: {c}" for n, c in zip(ORDINAL, self.choices)]
+        return self.step(f"Meinten Sie {', '.join(named[:-1])}, oder {named[-1]}?")
+
+    def picked(self, d: questions.Decision) -> str | None:
+        """The offered value an answer in the confirm phase picks, if any."""
+        if d.action not in ("accept", "confirm"):
+            return None
+        if d.value in self.choices:
+            return d.value
+        if d.value in NUMBERS and NUMBERS[d.value] < len(self.choices):
+            return self.choices[NUMBERS[d.value]]
+        if d.value in YES and len(self.choices) == 1:
+            return self.choices[0]
+        return None
+
     def answer(self, d: questions.Decision) -> dict:
         if self.phase == "done":
             raise ValueError("dialog is done")
         if self.phase == "final":
-            self.confirmed, self.phase = is_yes(d), "done"
-            return self.step("Vielen Dank, Ihr Flug ist gebucht." if self.confirmed
-                             else "Gut, dann fangen wir noch einmal an.")
+            return self._finish(is_yes(d))
         if self.phase == "ask" and d.action == "accept":
             return self._next(d.value)
-        if self.phase == "ask" and d.action == "confirm":
-            self.phase, self.pending = "confirm", d.value
-            return self.step(f"Meinten Sie {d.value}?")
-        if self.phase == "confirm" and is_yes(d):
-            return self._next(self.pending)
-        self.phase, self.tries = "ask", self.tries + 1
+        if self.phase == "ask" and d.action in ("confirm", "choose"):
+            return self.offer(d.candidates if d.action == "choose" else [d.value])
+        if self.phase == "confirm" and (value := self.picked(d)):
+            return self._next(value)
+        return self._retry()
+
+    def choose(self, value: str | None) -> dict:
+        """A tapped button: one of ``choices`` (or "ja" in the final phase); None is "none of these"."""
+        if self.phase == "final":
+            return self._finish(value in YES)
+        if self.phase == "confirm" and value in self.choices:
+            return self._next(value)
+        if self.phase == "confirm" and value is None:
+            return self._retry()
+        raise ValueError(f"nothing to choose in phase {self.phase}")
+
+    def _finish(self, yes: bool) -> dict:
+        self.confirmed, self.phase, self.choices = yes, "done", []
+        return self.step("Vielen Dank, Ihr Flug ist gebucht." if yes else "Gut, dann fangen wir noch einmal an.")
+
+    def _retry(self) -> dict:
+        self.phase, self.choices, self.tries = "ask", [], self.tries + 1
         if self.tries < MAX_TRIES:
             return self.step("Entschuldigung, bitte noch einmal.")
         return self._next(None, "Entschuldigung, das überspringen wir. ")
 
     def _next(self, value: str | None, prefix: str = "") -> dict:
         self.booking[FLOW[self.i]] = value
-        self.i, self.tries, self.pending, self.phase = self.i + 1, 0, None, "ask"
+        self.i, self.tries, self.choices, self.phase = self.i + 1, 0, [], "ask"
         if self.i < len(FLOW):
             return self.step(prefix + self.questions[FLOW[self.i]].ask)
         self.phase = "final"
@@ -249,7 +296,7 @@ class Session:
             self.say(step["say"])
             if step["listen"] is None:
                 break
-            step = self.dialog.answer(self.listen(self.dialog.questions[step["listen"]]))
+            step = self.dialog.answer(self.listen(self.dialog.question(step["listen"])))
         self.ear.save(self.dialog)
         print(f"\nAufnahmen und Protokoll: {self.ear.out}")
 
@@ -298,15 +345,26 @@ def make_handler(args: argparse.Namespace, profile: Profile, token: str | None =
                 if path == "/api/start":
                     state["ear"], state["dialog"] = Transcriber(args, profile), Dialog(qs)
                     return self._json({"step": state["dialog"].start()})
-                if path != "/api/answer":
+                if path not in ("/api/answer", "/api/choose"):
                     return self.send_error(HTTPStatus.NOT_FOUND)
                 dialog = state.get("dialog")
                 if dialog is None or dialog.phase == "done":
                     return self._json({"error": "kein Gespräch aktiv"}, HTTPStatus.CONFLICT)
+                ear = state["ear"]
+                if path == "/api/choose":  # a tapped option: {"value": "Berlin"}, "ja", or null for none
+                    try:
+                        value = json.loads(body or b"{}").get("value")
+                        step = dialog.choose(value)
+                    except (ValueError, AttributeError) as e:
+                        return self._json({"error": str(e)}, HTTPStatus.BAD_REQUEST)
+                    ear.takes.append({"question": "choice", "tapped": value})
+                    print(f"  getippt: {value!r}", flush=True)
+                    if step["listen"] is None:
+                        ear.save(dialog)
+                    return self._json({"step": step})
                 if body[:4] != b"RIFF" or body[8:12] != b"WAVE":
                     return self._json({"error": "keine WAV-Aufnahme"}, HTTPStatus.BAD_REQUEST)
-                ear = state["ear"]
-                q = qs[dialog.step("")["listen"]]
+                q = dialog.question(dialog.step("")["listen"])
                 wav = ear.path(q)
                 wav.write_bytes(body)
                 try:
