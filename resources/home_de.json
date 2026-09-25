@@ -1,0 +1,25 @@
+{
+  "device": {
+    "ask": "Welches Gerät?",
+    "values": ["Licht", "Lampe", "Heizung", "Rollo", "Musik", "Fernseher"],
+    "aliases": {"Lichter": "Licht", "Deckenlicht": "Licht", "Stehlampe": "Lampe", "Leselampe": "Lampe",
+                "Jalousie": "Rollo", "Rollladen": "Rollo", "Rollos": "Rollo", "Lampen": "Lampe", "Radio": "Musik", "Fernsehen": "Fernseher"},
+    "after": ["bitte"]
+  },
+  "room": {
+    "ask": "In welchem Raum?",
+    "values": ["Flur", "Küche", "Bad", "Wohnzimmer", "Schlafzimmer", "Büro", "Garten", "überall"],
+    "aliases": {"Badezimmer": "Bad", "Diele": "Flur", "Arbeitszimmer": "Büro", "alle": "überall",
+                "Haus": "überall"},
+    "before": ["im", "in", "in der"],
+    "after": ["bitte"]
+  },
+  "action": {
+    "ask": "Was soll ich tun?",
+    "values": ["an", "aus", "hoch", "runter", "wärmer", "kälter", "lauter", "leiser"],
+    "aliases": {"einschalten": "an", "anschalten": "an", "anmachen": "an", "hell": "an", "start": "an",
+                "ausschalten": "aus", "ausmachen": "aus", "dunkel": "aus", "stopp": "aus",
+                "auf": "hoch", "rauf": "hoch", "zu": "runter", "herunter": "runter"},
+    "after": ["bitte"]
+  }
+}

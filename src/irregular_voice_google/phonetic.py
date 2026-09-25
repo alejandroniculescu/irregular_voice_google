@@ -4,6 +4,13 @@ The adapter's typical slips keep the consonant skeleton ("Sieben" -> "Seben",
 both ``816``), so comparing codes instead of spellings recovers them. Vowels
 are dropped (except a leading one), letters that sound alike share a digit and
 repeated digits collapse.
+
+``variants`` adds looser codes for German sounds the plain code keeps apart
+but that softer articulation or a dialect often merges: "Djamila" / "Jamila", "Topf" /
+"Top", "Ferse" / "Fehse" (a vocalized r), "stramme" / "tramme" (a lost
+initial s), "ich" / "isch", "rücksichtsloser" / "rücksichtloser" (a lost
+linking s). They only widen the search for candidates; the spelling distance in
+``snap.py`` still decides.
 """
 
 from __future__ import annotations
@@ -40,3 +47,26 @@ def code(text: str) -> str:
         collapsed = re.sub(r"(\d)\1+", r"\1", digits)
         out.append(collapsed[:1] + collapsed[1:].replace("0", ""))
     return " ".join(w for w in out if w)
+
+
+# Respellings for sounds that often merge in everyday or dialect German; each is applied on its own.
+_LOOSE = [
+    (re.compile(r"^(dsch|tsch|dj)"), "j"),  # Dschungel, Djamila ~ J-
+    (re.compile(r"^pf"), "f"),  # Pfeffer ~ Feffer
+    (re.compile(r"pf$"), "p"),  # Topf ~ Top (in the middle pf stays: Opfel is Apfel, not Opel)
+    (re.compile(r"(?<=[aeiouy])r(?![aeiouy])"), ""),  # vocalized r: Ferse ~ Fehse
+    (re.compile(r"^s(?=[ptk])"), ""),  # lost initial s: stramme ~ tramme
+    (re.compile(r"(?<![s])ch"), "sch"),  # ich ~ isch
+    (re.compile(r"(?<=[^aeiouy])s(?=[^aeiouyhc])"), ""),  # lost linking s: rücksichtsloser ~ rücksichtloser
+]
+
+
+def variants(word: str) -> set[str]:
+    """The plain code of one word plus its looser codes (see ``_LOOSE``)."""
+    w = word.lower().translate(_FOLD)
+    out = {code(w)}
+    for pattern, sub in _LOOSE:
+        if (v := pattern.sub(sub, w)) != w:
+            out.add(code(v))
+    out.discard("")
+    return out

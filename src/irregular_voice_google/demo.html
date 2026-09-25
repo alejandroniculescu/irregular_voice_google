@@ -1,0 +1,323 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Flug buchen per Stimme</title>
+<style>
+  :root {
+    --bg: #f7f6f2; --fg: #1d1d1b; --muted: #6b6a66; --card: #ffffff; --line: #deddd8;
+    --rec: #c62828; --ok: #2e7d32; --warn: #b26a00; --accent: #1f5fa8; --bot: #eef3fa;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #161615; --fg: #efeee9; --muted: #a09f99; --card: #22221f; --line: #3a3935;
+            --rec: #ef5350; --ok: #66bb6a; --warn: #ffb74d; --accent: #6ea8ff; --bot: #1d2533; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+         font: 18px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 760px; margin: 0 auto; padding: 16px; height: 100svh;
+         display: flex; flex-direction: column; gap: 14px; }
+  main > * { flex-shrink: 0; }
+  h1 { font-size: 22px; margin: 4px 0 0; }
+  .booking { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+  .field { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; min-width: 0; }
+  .field span { display: block; color: var(--muted); font-size: 13px; }
+  .field b { display: block; font-size: 19px; overflow-wrap: anywhere; }
+  .field.current { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent) inset; }
+  .field.filled b { color: var(--ok); }
+  @media (max-width: 560px) { .booking { grid-template-columns: 1fr 1fr; } }
+  #house { display: flex; gap: 8px; overflow-x: auto; }
+  #house:empty { display: none; }
+  .room { flex-shrink: 0; white-space: nowrap; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 6px 10px; font-size: 15px; }
+  .room b { display: block; font-size: 13px; color: var(--muted); font-weight: 400; }
+  .room .on { color: var(--ok); font-weight: 600; } .room .off { color: var(--muted); }
+  .room .fresh { outline: 2px solid var(--accent); border-radius: 6px; padding: 0 3px; }
+  #log { flex: 1 1 0; flex-shrink: 1; display: flex; flex-direction: column; gap: 10px; overflow-y: auto; min-height: 60px;
+         background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 14px; }
+  .msg { max-width: 85%; padding: 10px 14px; border-radius: 14px; }
+  .bot { align-self: flex-start; background: var(--bot); font-size: 22px; font-weight: 600; }
+  .me { align-self: flex-end; border: 1px solid var(--line); }
+  .me q { font-size: 20px; }
+  .tag { display: block; font-size: 14px; margin-top: 4px; color: var(--muted); }
+  .tag.accept { color: var(--ok); } .tag.confirm, .tag.choose { color: var(--warn); } .tag.repeat { color: var(--rec); }
+  #choices { display: grid; gap: 10px; }
+  #choices:empty { display: none; }
+  #choices button { text-align: left; font-size: 24px; min-height: 64px; padding: 10px 14px; border-color: var(--accent); }
+  #choices button .n { display: inline-block; min-width: 1.6em; color: var(--accent); }
+  #choices button.no { border-color: var(--line); font-size: 20px; min-height: 60px; color: var(--muted); }
+  #status { text-align: center; min-height: 1.4em; color: var(--muted); }
+  .meter { height: 8px; background: var(--line); border-radius: 4px; overflow: hidden; }
+  .meter > div { height: 100%; width: 0; background: var(--accent); }
+  .controls { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  button { font: inherit; font-size: 20px; font-weight: 600; padding: 16px 12px; border-radius: 14px;
+           border: 2px solid var(--line); background: var(--card); color: var(--fg); cursor: pointer; min-height: 60px; }
+  button:disabled { opacity: .35; cursor: default; }
+  #mic { grid-column: 1 / -1; background: var(--rec); border-color: var(--rec); color: #fff; font-size: 26px; min-height: 96px; }
+  #mic.recording { animation: pulse 1.2s infinite; }
+  #mic.start { background: var(--accent); border-color: var(--accent); }
+  @keyframes pulse { 50% { opacity: .7; } }
+  .hint { color: var(--muted); font-size: 14px; text-align: center; margin: 0; }
+  @media (pointer: coarse) { .hint { display: none; } }
+</style>
+</head>
+<body>
+<main>
+  <h1 id="title">Flug buchen per Stimme</h1>
+  <div class="booking" id="fields"></div>
+  <div id="house" aria-label="Zuhause"></div>
+  <section id="log" aria-live="polite"></section>
+  <div id="choices" aria-label="Auswahl"></div>
+  <div class="meter"><div id="level"></div></div>
+  <div id="status">Mikrofon und Lautsprecher bereit? Dann „Start“ drücken.</div>
+  <div class="controls">
+    <button id="mic" class="start">▶ Start</button>
+    <button id="again" disabled>🔊 Frage wiederholen</button>
+    <button id="restart">↺ Neu beginnen</button>
+  </div>
+  <p class="hint">Leertaste: Aufnahme starten/stoppen</p>
+</main>
+<script>
+const MAX_SECONDS = 20;
+const $ = (id) => document.getElementById(id);
+const token = new URLSearchParams(location.search).get("token");
+const api = (path) => path + (token ? "?token=" + encodeURIComponent(token) : "");
+const LABELS = { accept: "✓ verstanden", confirm: "? nachfragen", choose: "? Auswahl", repeat: "↺ nochmal" };
+
+let step = null, busy = false;
+let ctx = null, stream = null, node = null, chunks = [], recording = false, startedAt = 0, tick = null;
+
+// --- connection: the phone reaches the Mac over the USB bridge (adb reverse), which can drop ---
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+async function post(path, body, type) {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      const r = await fetch(api(path), { method: "POST", body, headers: type ? { "Content-Type": type } : {} });
+      const data = await r.json();
+      if (!r.ok) throw Object.assign(new Error(data.error || r.status), { fatal: true });
+      return data;
+    } catch (e) {
+      if (e.fatal || attempt >= 10) throw e;
+      setStatus(`Verbindung zum Mac unterbrochen – USB-Kabel prüfen … (Versuch ${attempt})`);
+      await sleep(2000);
+    }
+  }
+}
+
+// --- keep the screen on: a phone that locks also silences the microphone ---
+let wakeLock = null;
+async function keepAwake() {
+  try { if (!wakeLock && navigator.wakeLock) wakeLock = await navigator.wakeLock.request("screen"); } catch {}
+  wakeLock?.addEventListener?.("release", () => { wakeLock = null; });
+}
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState !== "visible") return;
+  keepAwake();
+  if (stream && stream.getAudioTracks().some(t => t.readyState === "ended")) resetMic();
+});
+
+// --- speech out: the browser's German voice ---
+let voice = null;
+function pickVoice() {
+  const de = speechSynthesis.getVoices().filter(v => v.lang.toLowerCase().startsWith("de"));
+  voice = de.find(v => /anna/i.test(v.name)) || de.find(v => v.localService) || de[0] || null;
+}
+pickVoice(); speechSynthesis.onvoiceschanged = pickVoice;
+function speak(text) {
+  speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(text);
+  u.lang = "de-DE"; u.rate = 0.9; if (voice) u.voice = voice;
+  speechSynthesis.speak(u);
+}
+
+// --- conversation ---
+function setStatus(text) { $("status").textContent = text; }
+function add(cls, html) {
+  const el = document.createElement("div");
+  el.className = "msg " + cls; el.innerHTML = html;
+  $("log").appendChild(el); el.scrollIntoView({ block: "end", behavior: "smooth" });
+}
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+
+// the fields come from the dialog: flight (Wohin, Von wo, …) or home (Gerät, Raum, Aktion)
+function showFields(s) {
+  $("title").textContent = document.title = s.title;
+  const box = $("fields");
+  box.style.gridTemplateColumns = s.fields.length === 3 ? "repeat(3, 1fr)" : "";
+  box.innerHTML = s.fields.map(([k, label]) => {
+    const v = s.booking[k];
+    return `<div class="field${v ? " filled" : ""}${k === s.asking ? " current" : ""}">`
+         + `<span>${esc(label)}</span><b>${esc(v || "–")}</b></div>`;
+  }).join("");
+}
+
+// home: each room with its devices' last state; what just changed is outlined
+let lastHouse = {};
+function showHouse(s) {
+  const house = s.house || {};
+  $("house").innerHTML = Object.entries(house).map(([room, devices]) =>
+    `<div class="room"><b>${esc(room)}</b>` + Object.entries(devices).map(([d, a]) =>
+      `<span class="${a === "aus" ? "off" : "on"}${lastHouse[room]?.[d] !== a ? " fresh" : ""}">`
+      + `${esc(d)} ${esc(a)}</span>`).join(" · ") + "</div>").join("");
+  lastHouse = house;
+}
+
+function show(s) {
+  step = s;
+  showFields(s);
+  showHouse(s);
+  add("bot", esc(s.say));
+  speak(s.say);
+  showChoices(s);
+  $("log").scrollTop = $("log").scrollHeight;
+  $("again").disabled = false;
+  const done = s.listen === null;
+  $("mic").disabled = done; $("mic").classList.remove("start");
+  $("mic").textContent = "● Antworten";
+  setStatus(done ? (s.confirmed ? "Gebucht. „Neu beginnen“ für einen weiteren Flug." : "„Neu beginnen“ drücken.")
+                 : s.choices.length > 1 ? "Antippen oder sagen: Name oder „eins“ … „drei“."
+                 : s.phase !== "ask" ? "Antippen oder „ja“ / „nein“ sagen."
+                 : "Mikrofon drücken und antworten.");
+}
+
+// --- options to tap (they can also be said: the name, its number, ja / nein) ---
+function showChoices(s) {
+  const box = $("choices"); box.innerHTML = "";
+  const button = (html, value, cls = "") => {
+    const b = document.createElement("button");
+    b.innerHTML = html; b.className = cls; b.onclick = () => choose(value, b.textContent);
+    box.appendChild(b);
+  };
+  if (s.phase === "final") {
+    button("✓ Ja, buchen", "ja"); button("✗ Nein", null, "no");
+  } else if (s.choices.length === 1) {
+    button(`✓ Ja, ${esc(s.choices[0])}`, s.choices[0]); button("✗ Nein", null, "no");
+  } else if (s.choices.length) {
+    s.choices.forEach((c, i) => button(`<span class="n">${i + 1}</span> ${esc(c)}`, c));
+    button("✗ Keins davon", null, "no");
+  }
+}
+
+async function choose(value, label) {
+  if (busy || recording) return;
+  busy = true; speechSynthesis.cancel();
+  for (const b of $("choices").children) b.disabled = true;
+  try {
+    const data = await post("/api/choose", JSON.stringify({ value }), "application/json");
+    add("me", `<q>${esc(label.trim())}</q><span class="tag accept">👆 getippt</span>`);
+    show(data.step);
+  } catch (e) {
+    setStatus("Fehler: " + e.message);
+    for (const b of $("choices").children) b.disabled = false;
+  } finally { busy = false; }
+}
+
+async function start() {
+  $("log").innerHTML = ""; $("choices").innerHTML = ""; lastHouse = {};
+  keepAwake();
+  try { show((await post("/api/start")).step); } catch (e) { setStatus("Fehler: " + e.message); }
+}
+
+// --- microphone ---
+async function startRecording() {
+  if (!ctx) {
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: { channelCount: 1, echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+    });
+    ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const source = ctx.createMediaStreamSource(stream);
+    node = ctx.createScriptProcessor(4096, 1, 1);
+    const mute = ctx.createGain(); mute.gain.value = 0;
+    source.connect(node); node.connect(mute); mute.connect(ctx.destination);
+    node.onaudioprocess = (e) => {
+      const data = e.inputBuffer.getChannelData(0);
+      let sum = 0; for (let i = 0; i < data.length; i++) sum += data[i] * data[i];
+      $("level").style.width = Math.min(100, Math.sqrt(sum / data.length) * 400) + "%";
+      if (recording) chunks.push(new Float32Array(data));
+    };
+  }
+  speechSynthesis.cancel();
+  await ctx.resume();
+  chunks = []; recording = true; startedAt = Date.now();
+  $("mic").textContent = "■ Fertig"; $("mic").classList.add("recording");
+  setStatus("Ich höre zu …");
+  tick = setInterval(() => {
+    const s = (Date.now() - startedAt) / 1000;
+    setStatus(`Ich höre zu … ${s.toFixed(0)} s`);
+    if (s >= MAX_SECONDS) stopRecording();
+  }, 250);
+}
+
+async function stopRecording() {
+  recording = false; clearInterval(tick);
+  $("mic").classList.remove("recording"); $("level").style.width = "0";
+  const length = chunks.reduce((n, c) => n + c.length, 0);
+  if (length < ctx.sampleRate * 0.3) {
+    $("mic").textContent = "● Antworten";
+    return setStatus("Zu kurz – bitte noch einmal.");
+  }
+  const samples = new Float32Array(length);
+  let offset = 0, peak = 0;
+  for (const c of chunks) { samples.set(c, offset); offset += c.length; }
+  for (let i = 0; i < samples.length; i++) peak = Math.max(peak, Math.abs(samples[i]));
+  if (peak < 1e-4) {  // all zeros: the microphone was cut off (screen lock, other app); reconnect it
+    resetMic(); $("mic").textContent = "● Antworten";
+    return setStatus("Kein Ton vom Mikrofon – bitte noch einmal drücken und sprechen.");
+  }
+  busy = true; $("mic").disabled = true; $("mic").textContent = "… verstehe";
+  setStatus("Whisper transkribiert …");
+  try {
+    const data = await post("/api/answer", encodeWav(samples, ctx.sampleRate), "audio/wav");
+    const h = data.heard;
+    add("me", `<q>${esc(h.text) || "…"}</q><span class="tag ${h.action}">${LABELS[h.action]}`
+              + (h.value ? ` → ${esc(h.value)}` : "") + (h.guard ? ` (${esc(h.guard)})` : "")
+              + ` · Sicherheit ${Math.round(h.min_p * 100)} %</span>`);
+    show(data.step);
+  } catch (e) {
+    setStatus("Fehler: " + e.message); $("mic").disabled = false; $("mic").textContent = "● Antworten";
+  } finally { busy = false; }
+}
+
+function resetMic() {
+  stream?.getTracks().forEach(t => t.stop());
+  ctx?.close().catch(() => {});
+  ctx = stream = node = null;
+}
+
+function encodeWav(samples, rate) {
+  const buffer = new ArrayBuffer(44 + samples.length * 2), v = new DataView(buffer);
+  const str = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+  str(0, "RIFF"); v.setUint32(4, 36 + samples.length * 2, true); str(8, "WAVE");
+  str(12, "fmt "); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+  str(36, "data"); v.setUint32(40, samples.length * 2, true);
+  for (let i = 0; i < samples.length; i++) {
+    const s = Math.max(-1, Math.min(1, samples[i]));
+    v.setInt16(44 + i * 2, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+  }
+  return new Blob([buffer], { type: "audio/wav" });
+}
+
+function micPressed() {
+  if (busy || $("mic").disabled) return;
+  if (!step) return start();
+  recording ? stopRecording() : startRecording().catch(e => setStatus("Mikrofon: " + e.message));
+}
+(async () => {  // a reload (or a dropped connection) continues the conversation instead of starting over
+  try {
+    const r = await fetch(api("/api/state"));
+    const s = r.ok && (await r.json()).step;
+    if (s && s.listen !== null) { lastHouse = s.house || {}; add("bot", "<small>(fortgesetzt)</small>"); show(s); keepAwake(); }
+  } catch {}
+})();
+$("mic").onclick = micPressed;
+$("again").onclick = () => step && speak(step.say);
+$("restart").onclick = () => { if (!busy) { recording = false; clearInterval(tick); start(); } };
+document.addEventListener("keydown", (e) => {
+  if (e.code !== "Space" || e.repeat) return;
+  e.preventDefault(); document.activeElement?.blur?.();  // no second click from a focused button
+  micPressed();
+});
+</script>
+</body>
+</html>

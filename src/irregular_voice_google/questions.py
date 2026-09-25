@@ -26,6 +26,7 @@ from pathlib import Path
 from irregular_voice_google import phonetic
 from irregular_voice_google.lexicon import load_lexicon
 from irregular_voice_google.profile import Profile
+from irregular_voice_google.snap import edits
 from irregular_voice_google.text import normalize
 
 DAY_RULE = '("3" [01] | [12] [0-9] | [1-9]) "."'
@@ -86,23 +87,52 @@ def match(question: Question, text: str) -> str | None:
     return max(found, key=len) if found else None
 
 
+def content(question: Question, text: str) -> str:
+    """Normalized ``text`` without the carrier words, so "von" cannot sound like "Wien"."""
+    carrier = {w for phrase in question.before + question.after for w in normalize(phrase).split()}
+    return " ".join(w for w in normalize(text).split() if w not in carrier)
+
+
 def sounds_like(question: Question, text: str) -> list[str]:
     """Listed values whose Kölner Phonetik code appears in ``text`` ("Seben" -> "sieben")."""
-    heard = f" {phonetic.code(normalize(text))} "
+    heard = f" {phonetic.code(content(question, text))} "
     found = [v for v in question.values if (c := phonetic.code(normalize(v))) and f" {c} " in heard]
     return [v for v in found if not any(v != w and normalize(v) in normalize(w) for w in found)]  # longest only
 
 
+def suggest(question: Question, text: str, n: int = 3, max_distance: float = 0.45) -> list[str]:
+    """Up to ``n`` listed values that sound closest to a same-length stretch of ``text``.
+
+    Distance is ``snap.edits`` (voicing swaps, doubled letters and h cost half)
+    per letter, so "Bärlin" -> Berlin 0.17 and "Modien" -> morgen 0.33, while
+    unrelated words stay at 0.5 and above.
+    """
+    words = content(question, text).split()
+    scored = []
+    for v in question.values:
+        target = normalize(v)
+        k = len(target.split())
+        spans = [" ".join(words[i:i + k]) for i in range(max(1, len(words) - k + 1))]
+        d = min(edits(span, target) / max(len(span), len(target), 1) for span in spans)
+        if d <= max_distance:
+            scored.append((d, v))
+    return [v for _, v in sorted(scored)[:n]]
+
+
 @dataclass
 class Decision:
-    action: str  # "accept", "confirm" ("Meinten Sie …?") or "repeat"
+    action: str  # "accept", "confirm" ("Meinten Sie …?"), "choose" (up to three candidates) or "repeat"
     value: str | None = None
     candidates: list[str] = field(default_factory=list)
+    commands: list[dict] = field(default_factory=list)  # home control: the commands in a whole sentence
 
 
 def resolve(question: Question, text: str, min_p: float | None = None, threshold: float = 0.5,
             flagged: bool = False) -> Decision:
     """Accept only a spelled-out value heard confidently; a low-confidence or sound-alike value is confirmed.
+
+    Several sound-alikes (or near misses from ``suggest``) become a choice of up
+    to three; nothing is ever accepted without the speaker picking it.
 
     ``min_p`` is whisper.cpp's lowest token probability (None skips the check);
     ``flagged`` is the loop guard's verdict, which always means "please repeat".
@@ -114,4 +144,7 @@ def resolve(question: Question, text: str, min_p: float | None = None, threshold
     candidates = sounds_like(question, text)
     if len(candidates) == 1:
         return Decision("confirm", candidates[0], candidates)
-    return Decision("repeat", None, candidates)
+    candidates = list(dict.fromkeys([*candidates, *suggest(question, text)]))[:3]
+    if len(candidates) == 1:
+        return Decision("confirm", candidates[0], candidates)
+    return Decision("choose" if candidates else "repeat", None, candidates)
