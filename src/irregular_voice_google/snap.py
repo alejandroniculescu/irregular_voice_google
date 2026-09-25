@@ -47,15 +47,15 @@ _UMLAUTS = [set("aä"), set("oö"), set("uü"), set("eä")]
 _VOWELS = "aeiouäöüy"
 
 
-def _swap(x: str, y: str, slurred: bool) -> float:
-    pairs = _PAIRS + _UMLAUTS if slurred else _PAIRS
+def _swap(x: str, y: str, variants: bool) -> float:
+    pairs = _PAIRS + _UMLAUTS if variants else _PAIRS
     return 0.0 if x == y else 0.5 if any(x in p and y in p for p in pairs) else 1.0
 
 
-def _gap(w: str, i: int, slurred: bool) -> float:
+def _gap(w: str, i: int, variants: bool) -> float:
     """Cost of inserting/deleting w[i]: half for a doubled consonant or a silent h.
 
-    ``slurred`` also halves what German spelling or a slurred sound hides: a
+    ``variants`` also halves sounds that German spelling hides or that speech often softens: a
     doubled vowel (Kaffe/Kaffee), the e of ie, an r after a vowel
     (vocalized: Ferse/Fehse), an s between consonants or starting a cluster
     (stramme/tramme, rücksichtsloser/rücksichtloser), the f of a final pf (Topf/Top),
@@ -64,7 +64,7 @@ def _gap(w: str, i: int, slurred: bool) -> float:
     c, prev, nxt = w[i], w[i - 1] if i else "", w[i + 1 : i + 2]
     if c == "h" or (c not in _VOWELS and c in (prev, nxt)):
         return 0.5
-    if not slurred:
+    if not variants:
         return 1.0
     cons = lambda x: bool(x) and x not in _VOWELS  # noqa: E731
     return 0.5 if (c in (prev, nxt) or (c == "e" and prev == "i")
@@ -74,20 +74,20 @@ def _gap(w: str, i: int, slurred: bool) -> float:
                    or (c == "d" and nxt == "j") or (c == "t" and nxt == "z")) else 1.0
 
 
-def edits(a: str, b: str, slurred: bool = False) -> float:
+def edits(a: str, b: str, variants: bool = False) -> float:
     """Edit distance where voicing swaps (b/p, d/t, g/k), doubled consonants and h cost half.
 
-    ``slurred`` (for snapping free text) also halves umlaut swaps (ä/a) and the
+    ``variants`` (for snapping free text) also halves umlaut swaps (ä/a) and the
     hidden sounds in ``_gap``. Booking values (``questions.suggest``) keep the
     strict costs: there a looser match lets noise ("Jungen") reach a value ("München")."""
     prev = [0.0]
     for j in range(len(b)):
-        prev.append(prev[-1] + _gap(b, j, slurred))
+        prev.append(prev[-1] + _gap(b, j, variants))
     for i, ca in enumerate(a):
-        cur = [prev[0] + _gap(a, i, slurred)]
+        cur = [prev[0] + _gap(a, i, variants)]
         for j, cb in enumerate(b):
-            cur.append(min(prev[j + 1] + _gap(a, i, slurred), cur[j] + _gap(b, j, slurred),
-                           prev[j] + _swap(ca, cb, slurred)))
+            cur.append(min(prev[j + 1] + _gap(a, i, variants), cur[j] + _gap(b, j, variants),
+                           prev[j] + _swap(ca, cb, variants)))
         prev = cur
     return prev[-1]
 
@@ -124,7 +124,7 @@ class Snapper:
         """(edits, -zipf, word) for every other real word that shares one of ``word``'s sound codes."""
         w = word.lower()
         found = {c for k in phonetic.variants(w) for c in self.by_code.get(k, ())} - {w}
-        return sorted((edits(w, c, slurred=True), -self.freq.get(c, self.min_zipf), c) for c in found)
+        return sorted((edits(w, c, variants=True), -self.freq.get(c, self.min_zipf), c) for c in found)
 
     def word(self, word: str) -> str:
         w = word.lower()

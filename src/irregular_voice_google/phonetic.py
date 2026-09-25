@@ -6,7 +6,7 @@ are dropped (except a leading one), letters that sound alike share a digit and
 repeated digits collapse.
 
 ``variants`` adds looser codes for German sounds the plain code keeps apart
-but that a weak or slurred articulation merges: "Djamila" / "Jamila", "Topf" /
+but that softer articulation or a dialect often merges: "Djamila" / "Jamila", "Topf" /
 "Top", "Ferse" / "Fehse" (a vocalized r), "stramme" / "tramme" (a lost
 initial s), "ich" / "isch", "rücksichtsloser" / "rücksichtloser" (a lost
 linking s). They only widen the search for candidates; the spelling distance in
@@ -49,7 +49,7 @@ def code(text: str) -> str:
     return " ".join(w for w in out if w)
 
 
-# Respellings for sounds that often merge in slurred or dialect German; each is applied on its own.
+# Respellings for sounds that often merge in everyday or dialect German; each is applied on its own.
 _LOOSE = [
     (re.compile(r"^(dsch|tsch|dj)"), "j"),  # Dschungel, Djamila ~ J-
     (re.compile(r"^pf"), "f"),  # Pfeffer ~ Feffer

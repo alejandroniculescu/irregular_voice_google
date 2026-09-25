@@ -12,7 +12,7 @@ def test_edits():
     assert edits("geklabt", "geklappt") == 1  # b->p and the doubled p cost half each
     assert edits("geklabt", "geklebt") == 1
     assert edits("kinn", "kinn") == 0
-    assert edits("sagt", "sägt") == 1 and edits("sagt", "sägt", slurred=True) == 0.5  # ä/a halves only when slurred
+    assert edits("sagt", "sägt") == 1 and edits("sagt", "sägt", variants=True) == 0.5  # ä/a halves only with variants
 
 
 def test_snaps_non_word_to_same_sounding_word(snapper):
