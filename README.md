@@ -4,6 +4,10 @@ Speech recognition that learns one person's voice from 12 minutes of
 recordings, runs offline on a laptop, and never acts on a command it is unsure
 of.
 
+**[View the full overview →](https://alejandroniculescu.github.io/irregular_voice_google/)** · **Code:** setup, recording, training and demos are in [docs/USAGE.md](docs/USAGE.md).
+
+<p align="center"><img src="docs/results.svg" alt="Word error rate falls from 55.4% with the base model to 10.7% with the personal LoRA and sound-based correction" width="720"></p>
+
 ## TL;DR
 
 **How well it works.** Standard German speech recognition got more than half
