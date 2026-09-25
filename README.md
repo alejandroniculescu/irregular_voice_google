@@ -7,6 +7,9 @@ Plan: baseline German Whisper models → domain lexicon biasing → per-speaker
 LoRA fine-tune → LLM slot-filling with spoken confirmation → retrain on
 confirmed/corrected utterances.
 
+**Overview for readers:** [docs/PITCH.md](docs/PITCH.md): results, every
+algorithm used, the proposed learning loop, related work and references.
+
 ## Setup
 
 Requires [uv](https://docs.astral.sh/uv/) and `ffmpeg` (for phone formats like `.m4a`).
