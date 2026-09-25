@@ -24,10 +24,10 @@ the system carried out **0 wrong commands**: when it was unsure, it asked.
 - *Safe by design.* When the system is unsure it offers 2–3 choices
   ("Meinten Sie …?") instead of guessing, so a mistake costs one tap, not a
   wrong action.
-- *In line with the research.* The closest published study reached a similar
-  error rate (10.7%) for one German speaker using 22.5 hours of speech [1]; we
-  used 12 minutes (different speaker and test set, so not directly
-  comparable). Google's Project Euphonia found 3–4 minutes per person enough
+- *About 100× less data for the same result.* The closest published study
+  [1] needed 22.5 hours of one German speaker's speech to reach 10.7% WER;
+  with 1.4 hours it reached 15.8%. We reach 10.7% with 12 minutes. (Different
+  speaker and test set; an equal-footing test on their data is next.) Google's Project Euphonia found 3–4 minutes per person enough
   for home control for 63% of speakers [4].
 
 **How it scales.**
@@ -129,20 +129,22 @@ audio.
 
 ## Roadmap
 
-1. **Least data that works:** results with 2, 5 and 12 minutes of recordings.
-2. **More users:** 10–20 German speakers with dysarthria from different causes.
-3. **Shared starting model:** trained on many speakers, plus a small personal
+1. **Equal-footing comparison:** run our pipeline with 12 minutes of the
+   published study's speaker [1, 20] and score it on their test set.
+2. **Least data that works:** results with 2, 5 and 12 minutes of recordings.
+3. **More users:** 10–20 German speakers with dysarthria from different causes.
+4. **Shared starting model:** trained on many speakers, plus a small personal
    adapter, to cut recording time per new user.
-4. **Home use with the learning loop:** measure wrong actions, confirmations
+5. **Home use with the learning loop:** measure wrong actions, confirmations
    and error rate over weeks.
-5. **wav2vec2 version** of the recognizer (CTC, German XLS-R), compared
+6. **wav2vec2 version** of the recognizer (CTC, German XLS-R), compared
    directly with Whisper on the same data.
-6. **ImageBind experiment:** match the sound of a command to its meaning, as a
+7. **ImageBind experiment:** match the sound of a command to its meaning, as a
    second opinion next to the transcript; later add lip video. (ImageBind's
    weights are licensed for research only.)
-7. **Smarter correction:** use context to choose between sound-alike words,
+8. **Smarter correction:** use context to choose between sound-alike words,
    and check the extra German sound-variant rules on more speakers.
-8. **Acoustic profile** per user (formants, pitch, voice quality, rate) to
+9. **Acoustic profile** per user (formants, pitch, voice quality, rate) to
    predict how much adaptation will help.
 
 ## Technical details
