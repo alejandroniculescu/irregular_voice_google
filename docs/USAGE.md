@@ -1,4 +1,4 @@
-# irregular-voice-google
+# irregular-voice-google: setup and usage
 
 Personalised German speech recognition for a speaker with dysarthria, aimed at
 task-oriented use (e.g. booking a flight) on a phone or laptop.
@@ -7,8 +7,7 @@ Plan: baseline German Whisper models → domain lexicon biasing → per-speaker
 LoRA fine-tune → LLM slot-filling with spoken confirmation → retrain on
 confirmed/corrected utterances.
 
-**Overview for readers:** [docs/PITCH.md](docs/PITCH.md): results, every
-algorithm used, the proposed learning loop, related work and references.
+Results and overview: [README](../README.md).
 
 ## Setup
 

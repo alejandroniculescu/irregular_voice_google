@@ -1,0 +1,485 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Personal Voice Control for atypical speech using LoRA</title>
+<meta name="description" content="Speech recognition that learns one person's voice from 12 minutes of recordings, runs offline, and asks before acting when unsure.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,500;8..60,650&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root{
+  --paper:#F5F6F3; --panel:#FFFFFF; --ink:#1C2230; --muted:#5A6272; --rule:#DADDD6;
+  --accent:#2C5D8A; --accent-soft:#E3ECF4;
+  --ok:#2E7D4F; --ok-bg:#E2F1E7; --warn:#9A6212; --warn-bg:#F7ECD8;
+  --bad:#A63D2F; --bad-bg:#F6E1DD; --plan:#5B5F86; --plan-bg:#E7E8F2;
+  --bar-base:#A9B0BC;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    color-scheme:dark;
+    --paper:#14181F; --panel:#1B2029; --ink:#E6E8EC; --muted:#9BA3B2; --rule:#2C3340;
+    --accent:#7FB0DD; --accent-soft:#1F2D3C;
+    --ok:#79C898; --ok-bg:#1B3024; --warn:#E0B169; --warn-bg:#352A17;
+    --bad:#EE8F80; --bad-bg:#3A201C; --plan:#AEB2DE; --plan-bg:#262840;
+    --bar-base:#5A6272;
+  }
+}
+:root[data-theme="dark"]{
+  color-scheme:dark;
+  --paper:#14181F; --panel:#1B2029; --ink:#E6E8EC; --muted:#9BA3B2; --rule:#2C3340;
+  --accent:#7FB0DD; --accent-soft:#1F2D3C;
+  --ok:#79C898; --ok-bg:#1B3024; --warn:#E0B169; --warn-bg:#352A17;
+  --bad:#EE8F80; --bad-bg:#3A201C; --plan:#AEB2DE; --plan-bg:#262840;
+  --bar-base:#5A6272;
+}
+*{box-sizing:border-box}
+body{background:var(--paper);color:var(--ink);font:400 16px/1.6 "IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;padding-inline:20px;padding-block:40px 80px}
+.wrap{max-width:980px;margin:0 auto;display:flex;flex-direction:column;gap:56px}
+h1,h2,h3{font-family:"Source Serif 4",Georgia,"Times New Roman",serif;text-wrap:balance;margin:0;line-height:1.2}
+h1{font-size:clamp(2rem,4.5vw,2.9rem);font-weight:650;letter-spacing:-.01em}
+h2{font-size:1.65rem;font-weight:650}
+h3{font-size:1.15rem;font-weight:650}
+p{margin:0;max-width:68ch}
+.eyebrow{font:500 .75rem/1 "IBM Plex Mono",ui-monospace,monospace;letter-spacing:.12em;text-transform:uppercase;color:var(--accent)}
+.mono{font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:.88em}
+section{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--ink)}
+.muted{color:var(--muted)}
+header{display:flex;flex-direction:column;gap:16px;border-bottom:1px solid var(--rule);padding-bottom:32px}
+.meta{display:flex;flex-wrap:wrap;gap:8px 20px;font-size:.85rem;color:var(--muted)}
+
+.figs{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:1px;background:var(--rule);border:1px solid var(--rule);border-radius:6px;overflow:hidden}
+.fig{background:var(--panel);padding:18px 20px;display:flex;flex-direction:column;gap:6px}
+.fig b{font:500 1.9rem/1.1 "IBM Plex Mono",ui-monospace,monospace;font-variant-numeric:tabular-nums}
+.fig span{font-size:.86rem;color:var(--muted)}
+
+.chip{display:inline-block;font:500 .7rem/1 "IBM Plex Mono",ui-monospace,monospace;letter-spacing:.06em;text-transform:uppercase;padding:5px 7px;border-radius:3px;white-space:nowrap}
+.c-ok{color:var(--ok);background:var(--ok-bg)}
+.c-warn{color:var(--warn);background:var(--warn-bg)}
+.c-bad{color:var(--bad);background:var(--bad-bg)}
+.c-plan{color:var(--plan);background:var(--plan-bg)}
+.legend{display:flex;flex-wrap:wrap;gap:10px 18px;font-size:.85rem;color:var(--muted);align-items:center}
+.legend > div{display:flex;gap:8px;align-items:center}
+
+.tbl{overflow-x:auto;border:1px solid var(--rule);border-radius:6px;background:var(--panel)}
+table{border-collapse:collapse;width:100%;min-width:720px;font-size:.92rem}
+th,td{text-align:left;vertical-align:top;padding:11px 14px;border-bottom:1px solid var(--rule)}
+th{font:500 .72rem/1.2 "IBM Plex Mono",ui-monospace,monospace;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);background:var(--paper)}
+tr:last-child td{border-bottom:0}
+tr.grp td{background:var(--accent-soft);font:600 .8rem/1.2 "IBM Plex Sans",sans-serif;letter-spacing:.04em;text-transform:uppercase;color:var(--accent);padding-block:8px}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;font-family:"IBM Plex Mono",ui-monospace,monospace}
+td .file{display:block;margin-top:3px;font:400 .76rem "IBM Plex Mono",ui-monospace,monospace;color:var(--muted)}
+td:first-child{font-weight:600;min-width:170px}
+
+.flow{background:var(--panel);border:1px solid var(--rule);border-radius:6px;padding:16px;overflow-x:auto}
+
+.bars{display:flex;flex-direction:column;gap:14px;background:var(--panel);border:1px solid var(--rule);border-radius:6px;padding:20px}
+.bar{display:grid;grid-template-columns:minmax(120px,210px) 1fr;gap:12px;align-items:center}
+.bar .lbl{font-size:.88rem}
+.track{display:flex;flex-direction:column;gap:3px;padding-block:3px;background:linear-gradient(to right,var(--rule) 1px,transparent 1px) 0 0/ calc(100%/7) 100%}
+.line{display:flex;align-items:center;gap:8px;font:500 .76rem "IBM Plex Mono",monospace;font-variant-numeric:tabular-nums;white-space:nowrap}
+.line:last-child{color:var(--muted)}
+.fill.cer{height:10px;background:var(--muted);opacity:.55}
+.key{display:inline-block;width:18px;height:10px;border-radius:2px}
+.k-wer{background:var(--accent)}
+.k-cer{background:var(--muted);opacity:.55}
+.fill{height:18px;border-radius:0 3px 3px 0;flex:none}
+.f-base{background:var(--bar-base);color:var(--ink)}
+.f-ad{background:var(--accent);color:var(--panel)}
+.f-bad{background:var(--bad);color:var(--panel)}
+.axis{display:grid;grid-template-columns:minmax(120px,210px) 1fr;gap:12px}
+.axis div:last-child{display:flex;justify-content:space-between;font:400 .72rem "IBM Plex Mono",monospace;color:var(--muted)}
+.bars h3{font-size:1rem}
+
+.two{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:20px}
+.note{background:var(--panel);border:1px solid var(--rule);border-radius:6px;padding:18px 20px;display:flex;flex-direction:column;gap:10px}
+.note ul,.note ol{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px}
+.callout{border-left:3px solid var(--bad);background:var(--bad-bg);padding:16px 20px;border-radius:0 6px 6px 0;display:flex;flex-direction:column;gap:8px}
+.pitch{background:var(--accent-soft);border-radius:6px;padding:22px 24px;display:flex;flex-direction:column;gap:12px}
+.pitch p{font-family:"Source Serif 4",Georgia,serif;font-size:1.12rem;line-height:1.55}
+code{font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:.86em;background:var(--accent-soft);padding:1px 5px;border-radius:3px}
+ol.steps{margin:0;padding-left:1.3em;display:flex;flex-direction:column;gap:10px;max-width:72ch}
+.refs{margin:0;padding-left:1.8em;display:flex;flex-direction:column;gap:8px;font-size:.88rem;max-width:80ch}
+.refs a{color:var(--accent);word-break:break-word}
+.refs li::marker{font-family:"IBM Plex Mono",monospace;color:var(--muted)}
+footer{border-top:1px solid var(--rule);padding-top:20px;font-size:.84rem;color:var(--muted)}
+@media (max-width:560px){ .bar,.axis{grid-template-columns:1fr} .axis div:first-child{display:none} }
+.links{display:flex;flex-wrap:wrap;gap:10px}
+.btn{display:inline-flex;align-items:center;gap:6px;font:500 .88rem/1 "IBM Plex Sans",sans-serif;padding:10px 14px;border-radius:5px;border:1px solid var(--rule);background:var(--panel);color:var(--ink);text-decoration:none}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--panel)}
+.btn:hover{border-color:var(--accent)}
+.tldr{display:grid;grid-template-columns:repeat(auto-fit,minmax(270px,1fr));gap:16px}
+.tldr .note h3{color:var(--accent)}
+a{color:var(--accent)}
+footer a{color:inherit}
+</style>
+</head>
+<body>
+
+<div class="wrap">
+
+<header>
+  <div class="eyebrow">Personalized speech recognition · German</div>
+  <h1>Personal Voice Control for atypical speech using LoRA</h1>
+  <p class="lede">Speech recognition that learns one person's voice from 12 minutes of recordings, runs offline on a laptop, and never acts on a command it is unsure of.</p>
+  <div class="meta">
+    <span>Language: German</span><span>Speakers so far: 1 (anonymized)</span><span>Runs on: Apple laptop, offline</span><span>Live demo: home control and booking dialogs</span>
+  </div>
+  <div class="links">
+    <a class="btn primary" href="https://huggingface.co/alejandroniculescu/whisper-large-v3-turbo-german-lora-20260923-182243-q5_0.bin">Model on Hugging Face</a>
+    <a class="btn" href="https://github.com/alejandroniculescu/irregular_voice_google">Code on GitHub</a>
+    <a class="btn" href="https://github.com/alejandroniculescu/irregular_voice_google/blob/main/docs/USAGE.md">Setup and usage</a>
+  </div>
+</header>
+
+<section>
+  <div class="eyebrow">TL;DR</div>
+  <div class="tldr">
+    <div class="note">
+      <h3>How well it works</h3>
+      <ul>
+        <li>Standard German speech recognition got <b>55.4%</b> of our first user's words wrong.</li>
+        <li>With <b>12 minutes</b> of his recordings, a personal adapter and a sound-based correction step bring that to <b>10.7%</b>: about 5× fewer errors.</li>
+        <li><b>96%</b> of characters are right (4.0% character error rate).</li>
+        <li><b>0 wrong actions</b> in a replay of 15 commands: when unsure, it asked.</li>
+      </ul>
+    </div>
+    <div class="note">
+      <h3>Why this is the right approach</h3>
+      <ul>
+        <li><b>About 100× less data for the same result.</b> The closest published study needed 22.5 hours of one speaker's speech to reach 10.7%, and had 15.8% with 1.4 hours [1]. We reach 10.7% with 12 minutes. (Different speaker and test set; an equal-footing test is next.)</li>
+        <li><b>Personal, not generic.</b> One person's adapter makes others worse (60.6% → 109.4%), so the product is a fast way to make each person their own model.</li>
+        <li><b>The errors left are near misses</b> (13.2% word vs 4.3% character errors), exactly what sound-based matching fixes.</li>
+        <li><b>Safe by design:</b> when unsure it offers 2–3 choices, so a mistake costs one tap, not a wrong action.</li>
+      </ul>
+    </div>
+    <div class="note">
+      <h3>How it scales</h3>
+      <ul>
+        <li><b>Short onboarding:</b> ~350 short prompts (~12 min of speech), then a scripted pipeline trains, compresses and installs a 0.57 GB personal model.</li>
+        <li><b>Private and cheap to run:</b> daily recognition runs offline on an ordinary laptop, with no cloud service.</li>
+        <li><b>Gets better with use (next):</b> each choice the user makes becomes training data.</li>
+        <li><b>Less recording per new user (planned):</b> a shared starting model plus a small personal adapter.</li>
+        <li><b>Beyond Whisper:</b> a wav2vec2 version, then an ImageBind experiment that matches a command's sound to its meaning.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="eyebrow">Headline numbers · held-out test set, 39 clips</div>
+  <div class="figs">
+    <div class="fig"><b>55.4%</b><span>WER of the base German Whisper model on his speech</span></div>
+    <div class="fig"><b>13.2%</b><span>WER after the LoRA adapter (CER 4.3%)</span></div>
+    <div class="fig"><b>10.7%</b><span>WER with the phonetic word-repair step (CER 4.0%)</span></div>
+    <div class="fig"><b>0 / 15</b><span>wrong commands executed in the command replay test</span></div>
+    <div class="fig"><b>~100×</b><span>less speech than the closest published study for the same WER [1]</span></div>
+  </div>
+</section>
+
+<section>
+  <div class="eyebrow">How it works</div>
+  <h2>The pipeline, from microphone to action</h2>
+  <p>Two parts. <b>Onboarding</b> runs once per person on a lab GPU and produces their personal LoRA adapter. <b>Daily use</b> runs offline on their laptop with that adapter merged in. The third row, with dashed arrows, is the proposed learning loop described further down.</p>
+  <div class="flow">
+<pre class="mermaid">
+flowchart TB
+  subgraph T["① Onboarding · once per person · lab GPU"]
+    direction LR
+    R[~350 recorded prompts<br/>≈12 min of speech] --> S[Split by sentence<br/>train / dev / test]
+    S --> L[Train LoRA adapter<br/>rank 32 · SpecAugment]
+    L --> M[Merge + 5-bit<br/>0.57 GB model]
+  end
+  subgraph U["② Daily use · offline on the user's laptop"]
+    direction LR
+    A[Mic] --> B[Trim silence]
+    B --> C[Whisper German<br/>+ personal LoRA]
+    C --> D[Loop guard]
+    D --> E[Phonetic snap]
+    E --> F{Resolve}
+    F -->|sure| G[Act]
+    F -->|unsure| H[Meinten Sie …?<br/>2–3 choices]
+    F -->|no match| I[Please repeat]
+  end
+  subgraph P["③ Learning loop · proposed"]
+    direction LR
+    K[Log audio,<br/>options and his pick] --> N[Picks become labels<br/>+ preference pairs]
+    N --> O[Retrain every 1–2 weeks<br/>fine-tune + DPO]
+    O --> Q[Keep new adapter only if<br/>held-out test WER holds]
+  end
+  T -->|install adapter| U
+  U -.->|his choices| P
+  P -.->|updated adapter| U
+</pre>
+  </div>
+</section>
+
+<section>
+  <div class="eyebrow">Inventory</div>
+  <h2>Every algorithm in the system</h2>
+  <p>Grouped by layer, from data collection to evaluation. The status shows what has been measured, what is built but not yet used in the best model, what did not work, and what is proposed.</p>
+  <div class="legend">
+    <div><span class="chip c-ok">Measured</span> in the best system, with numbers</div>
+    <div><span class="chip c-warn">Built</span> implemented, not used in best model</div>
+    <div><span class="chip c-bad">Negative</span> tried, made things worse</div>
+    <div><span class="chip c-plan">Proposed</span> not implemented yet</div>
+  </div>
+  <div class="tbl">
+  <table>
+    <thead><tr><th>Algorithm</th><th>What it does</th><th>Evidence</th><th>Status</th></tr></thead>
+    <tbody>
+      <tr class="grp"><td colspan="4">1 · Data collection and splits</td></tr>
+      <tr><td>Clinical recording protocol<span class="file">recorder.py · CLAUDE.md</span></td><td>Phone recorder over HTTPS with a token. Prompts include a sustained vowel, pa-ta-ka repetition (DDK), 60 s of free speech and the standard "Grandfather" reading passage, plus the command phrases.</td><td>352 clips recorded; 278 train (11.9 min), 35 dev, 39 test.</td><td><span class="chip c-ok">Measured</span></td></tr>
+      <tr><td>Leakage-safe split by transcript hash<span class="file">manifest.py</span></td><td>Assigns each clip to train/dev/test by a hash of its sentence, so the same sentence never appears in two splits. Test scores reflect unseen sentences, not memorized ones.</td><td>Applies to every number on this page.</td><td><span class="chip c-ok">Measured</span></td></tr>
+
+      <tr class="grp"><td colspan="4">2 · Acoustic front end</td></tr>
+      <tr><td>Silence trimming (energy-based)<span class="file">preprocess.py</span></td><td>Cuts leading and trailing silence; resamples to 16 kHz mono.</td><td>Dev WER, base model: raw 58.4% → trim 57.7%.</td><td><span class="chip c-ok">Measured</span></td></tr>
+      <tr><td>Spectral EQ and tempo change<span class="file">preprocess.py</span></td><td>High-shelf boost (+6 dB) to restore consonant energy; time-stretch ×1.2 for slow speech.</td><td>trim+EQ 59.1%, tempo 62.0%. Both worse than trim alone, so dropped.</td><td><span class="chip c-bad">Negative</span></td></tr>
+      <tr><td>Data augmentation<span class="file">augment.py</span></td><td>Speed 0.9–1.1, low-pass muffle at 1–4 kHz, room reverb (RT60 0.15–0.6 s), background noise at 10–30 dB SNR, gain ±6 dB.</td><td>Ready for multi-speaker and noisy-room training.</td><td><span class="chip c-warn">Built</span></td></tr>
+      <tr><td>Synthetic dysarthric-like speech<span class="file">synth.py</span></td><td>German TTS of new command phrases, slowed and low-passed, to cover commands the speaker has not recorded.</td><td>Not yet shown to help.</td><td><span class="chip c-warn">Built</span></td></tr>
+
+      <tr class="grp"><td colspan="4">3 · Model adaptation</td></tr>
+      <tr><td>Base model: Whisper large-v3-turbo, German fine-tune<span class="file">primeline/whisper-large-v3-turbo-german</span></td><td>Encoder–decoder transformer. The turbo variant has only 4 decoder layers, so its built-in language model is weak and it tends to write what it hears.</td><td>Dev WER 57.7% on his speech without adaptation.</td><td><span class="chip c-ok">Measured</span></td></tr>
+      <tr><td>LoRA (low-rank adaptation)<span class="file">train.py · PEFT</span></td><td>Freezes the base weights and trains small rank-32 matrices (alpha 64, dropout 0.05) on the q, k, v, out, fc1 and fc2 layers of both encoder and decoder. lr 5e-4, batch 4 × 2 accumulation, gradient checkpointing, up to 10 epochs.</td><td>Dev WER 59.1% → 25.6% after one epoch, best 13.9%.</td><td><span class="chip c-ok">Measured</span></td></tr>
+      <tr><td>SpecAugment<span class="file">train.py</span></td><td>Randomly masks 5% of time steps and 5% of frequency bins during training, so a small dataset overfits less.</td><td>Part of the best run.</td><td><span class="chip c-ok">Measured</span></td></tr>
+      <tr><td>Early stopping on dev WER<span class="file">train.py</span></td><td>Keeps the checkpoint with the lowest dev WER; stops after 3 epochs without gain.</td><td>Selects the adapter used for all test numbers.</td><td><span class="chip c-ok">Measured</span></td></tr>
+      <tr><td>DoRA (weight-decomposed LoRA)<span class="file">train.py --dora</span></td><td>Splits each weight into magnitude and direction and adapts both. Often better than LoRA at small ranks.</td><td>Option exists; no comparison run yet.</td><td><span class="chip c-warn">Built</span></td></tr>
+      <tr><td>Learning from the user's choices<span class="file">see "Learning loop" below</span></td><td>When the system offers 2–3 options and he picks one, the pick becomes a new training label and the rejected options become negative examples (preference learning, DPO).</td><td>Choices are already offered in the demo; logging and training are not built.</td><td><span class="chip c-plan">Proposed</span></td></tr>
+      <tr><td>Merge + 5-bit quantization<span class="file">ggml q5_0 · whisper.cpp</span></td><td>Merges the adapter into the base weights, converts to ggml and quantizes to 5 bits. Runs on the laptop GPU (Metal), no network needed.</td><td>0.57 GB model, same WER as 16-bit.</td><td><span class="chip c-ok">Measured</span></td></tr>
+
+      <tr class="grp"><td colspan="4">4 · Decoding constraints</td></tr>
+      <tr><td>Loop guard<span class="file">guard.py</span></td><td>Caps output tokens by clip length and collapses repeated words or phrases, a known Whisper failure on slow or unclear speech. A flagged result triggers "please repeat".</td><td>Stopped a 137% WER blow-up (tempo+EQ) at 59.9%.</td><td><span class="chip c-ok">Measured</span></td></tr>
+      <tr><td>Personal prompt priming<span class="file">questions.py</span></td><td>Feeds the speaker's own frequent phrases to the decoder as context.</td><td>Dev WER 57.7% → 54.7% (base). Adding generic terms made it worse (61.3%).</td><td><span class="chip c-ok">Measured</span></td></tr>
+      <tr><td>Per-question grammar (GBNF)<span class="file">questions.py</span></td><td>For each question the app asks, a soft grammar raises the probability of the expected answers without forbidding others.</td><td>Used in the command dialog.</td><td><span class="chip c-ok">Measured</span></td></tr>
+      <tr><td>Token confidence (min p)<span class="file">questions.py</span></td><td>Takes the lowest token probability in the answer. Below 0.5 the system asks for confirmation instead of acting.</td><td>Part of the resolve step below.</td><td><span class="chip c-ok">Measured</span></td></tr>
+
+      <tr class="grp"><td colspan="4">5 · Phonetic and linguistic post-processing</td></tr>
+      <tr><td>Kölner Phonetik<span class="file">phonetic.py</span></td><td>A German phonetic code, the German counterpart of Soundex. It maps letters to sound classes by context, so words that sound alike share a code (for example <i>Seben</i> and <i>Sieben</i>).</td><td>Basis for snap and command matching.</td><td><span class="chip c-ok">Measured</span></td></tr>
+      <tr><td>Weighted phonetic edit distance<span class="file">snap.py</span></td><td>Levenshtein distance where likely dysarthric confusions cost half: voiced/voiceless pairs (b/p, d/t, g/k), dropped h, doubled consonants (<i>geklabt</i> → <i>geklappt</i>).</td><td>Used to rank repair candidates.</td><td><span class="chip c-ok">Measured</span></td></tr>
+      <tr><td>Non-word snap<span class="file">snap.py · wordfreq</span></td><td>Finds words that are not real German (by corpus frequency) and replaces them with the closest real word that has the same phonetic code.</td><td>Test WER 13.2% → 10.7%. Changed 4 of 1307 already-correct sentences.</td><td><span class="chip c-ok">Measured</span></td></tr>
+      <tr><td>Command snap<span class="file">snap.py</span></td><td>If a short answer has the same phonetic code and word count as a known command, it becomes that command (<i>Aushalten</i> → <i>Ausschalten</i>).</td><td>Part of the command replay result.</td><td><span class="chip c-ok">Measured</span></td></tr>
+      <tr><td>German sound-variant rules<span class="file">phonetic.py variants()</span></td><td>Extra loose codes for German patterns: vocalized r, lost initial s, <i>ch</i>/<i>sch</i>, initial and final <i>pf</i>, lost linking s, umlaut pairs, NFC Unicode normalization.</td><td>Dev WER 11.0% → 8.8%, but test unchanged at 10.7%. Tuned on too few errors; needs more speakers to judge.</td><td><span class="chip c-warn">Built</span></td></tr>
+      <tr><td>LLM rewrite (local Ollama)<span class="file">llmfix.py</span></td><td>A local language model rewrites the sentence, allowed only if the new words sound similar.</td><td>Dev WER 10.9% → 15.3%. The model "corrected" correct words.</td><td><span class="chip c-bad">Negative</span></td></tr>
+      <tr><td>Language-model rescoring of candidates</td><td>Instead of rewriting, a German LM (BERT-style or small LLM, on the lab server) picks between the few phonetically valid candidates that snap proposes. Targets the remaining errors that are real words in the wrong place.</td><td>Design ready; needs a model download or lab GPU.</td><td><span class="chip c-plan">Proposed</span></td></tr>
+
+      <tr class="grp"><td colspan="4">6 · Dialog and control</td></tr>
+      <tr><td>Resolve: accept / confirm / repeat<span class="file">questions.py</span></td><td>Combines confidence and phonetic match. Acts when sure, asks "Meinten Sie …?" with up to three choices when unsure, asks to repeat otherwise.</td><td>Replay of 15 commands: 12 accepted (all correct), 2 confirmed (correct), 1 repeat, 0 wrong.</td><td><span class="chip c-ok">Measured</span></td></tr>
+      <tr><td>Home-control slot dialog<span class="file">home.py</span></td><td>Fills device, room and action slots across turns ("Licht" → "Welcher Raum?"). Handles several commands in one sentence.</td><td>Live demo: lights, heating, blinds.</td><td><span class="chip c-ok">Measured</span></td></tr>
+
+      <tr class="grp"><td colspan="4">7 · Evaluation</td></tr>
+      <tr><td>WER and CER with German normalization<span class="file">text.py · evaluate.py</span></td><td>Word and character error rates after folding ß to ss, spelling out digits, expanding letter names and splitting hyphens, so spelling conventions are not counted as recognition errors.</td><td>Adapter test WER 14.9% raw → 13.2% normalized.</td><td><span class="chip c-ok">Measured</span></td></tr>
+      <tr><td>Cross-speaker transfer test<span class="file">external_dysarthric_german.py</span></td><td>Runs the personal adapter on 1272 clips from other German dysarthric speakers.</td><td>See the finding below.</td><td><span class="chip c-ok">Measured</span></td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<section>
+  <div class="eyebrow">Results</div>
+  <h2>Word and character error rates, drawn to scale</h2>
+  <p>WER counts a word as wrong if even one letter is off. CER counts wrong letters. Both are on the same scale here.</p>
+  <div class="bars" role="img" aria-label="Bar chart of word and character error rates">
+    <div class="legend"><div><span class="key k-wer"></span>WER (words)</div><div><span class="key k-cer"></span>CER (characters)</div></div>
+    <h3>His speech · held-out test (39 clips)</h3>
+    <div class="bar"><div class="lbl">Base German Whisper</div><div class="track"><div class="line"><div class="fill f-base" style="width:calc(55.4%/1.4)"></div><span>WER 55.4</span></div><div class="line"><div class="fill cer" style="width:calc(24.4%/1.4)"></div><span>CER 24.4</span></div></div></div>
+    <div class="bar"><div class="lbl">Base + phonetic snap</div><div class="track"><div class="line"><div class="fill f-base" style="width:calc(53.7%/1.4)"></div><span>WER 53.7</span></div><div class="line"><div class="fill cer" style="width:calc(24.8%/1.4)"></div><span>CER 24.8</span></div></div></div>
+    <div class="bar"><div class="lbl">+ personal LoRA</div><div class="track"><div class="line"><div class="fill f-ad" style="width:calc(13.2%/1.4)"></div><span>WER 13.2</span></div><div class="line"><div class="fill cer" style="width:calc(4.3%/1.4)"></div><span>CER 4.3</span></div></div></div>
+    <div class="bar"><div class="lbl">+ LoRA + phonetic snap</div><div class="track"><div class="line"><div class="fill f-ad" style="width:calc(10.7%/1.4)"></div><span>WER 10.7</span></div><div class="line"><div class="fill cer" style="width:calc(4.0%/1.4)"></div><span>CER 4.0</span></div></div></div>
+    <h3 style="margin-top:10px">Other German dysarthric speakers · 125 test clips</h3>
+    <div class="bar"><div class="lbl">Base German Whisper</div><div class="track"><div class="line"><div class="fill f-base" style="width:calc(60.6%/1.4)"></div><span>WER 60.6</span></div><div class="line"><div class="fill cer" style="width:calc(32.5%/1.4)"></div><span>CER 32.5</span></div></div></div>
+    <div class="bar"><div class="lbl">+ his LoRA</div><div class="track"><div class="line"><div class="fill f-bad" style="width:calc(109.4%/1.4)"></div><span>WER 109.4</span></div><div class="line"><div class="fill cer" style="width:calc(68.3%/1.4)"></div><span>CER 68.3</span></div></div></div>
+    <div class="axis"><div></div><div><span>0</span><span>20</span><span>40</span><span>60</span><span>80</span><span>100</span><span>120</span><span>140%</span></div></div>
+  </div>
+  <p class="muted">WER above 100% means the output contains more wrong or inserted words than the reference has words.</p>
+</section>
+
+<section>
+  <div class="eyebrow">Why phonemic repair</div>
+  <h2>The gap between WER and CER pointed us to sound-based fixes</h2>
+  <div class="two">
+    <div class="note">
+      <h3>After adaptation, errors are small</h3>
+      <p>With the LoRA, WER is 13.2% but CER only 4.3%, three times lower. Most wrong words are wrong by a letter or two: <i>geklabt</i> for <i>geklappt</i>, <i>Seben</i> for <i>Sieben</i>. The model heard the sounds; it picked the wrong spelling or a non-word. A near-miss like that costs a full word in WER.</p>
+      <p>That kind of error is what a phonetic code catches. Kölner Phonetik gives near-miss words the same code, and the weighted edit distance prefers the confusions dysarthria causes (voicing, dropped h, doubled consonants). Snap lowers WER from 13.2% to 10.7% while CER barely moves (4.3% → 4.0%), because it fixes one or two letters in words that were almost right.</p>
+    </div>
+    <div class="note">
+      <h3>Before adaptation, errors are too large</h3>
+      <p>On the base model CER is 24.4%: whole words are wrong, not single letters. Snap has little to work with there (WER 55.4% → 53.7%; CER even rises slightly to 24.8%), because the wrong words are too far from the right ones in sound.</p>
+      <p>So the order matters: the LoRA adapter brings the acoustic output close, and then sound-based repair can finish the job. This is also why we measure both: WER tells the user's experience, CER tells us what kind of error remains and which fix fits.</p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="callout">
+    <h3>Key finding: adaptation is personal</h3>
+    <p>The adapter cuts his error rate by 80%, but on other dysarthric speakers it nearly doubles the error (60.6% → 109.4%; about 108% over all 1272 clips). Dysarthria differs a lot between people, so a model tuned to one voice learns that voice. The method works, and scaling it means an onboarding process that produces one small adapter per person.</p>
+  </div>
+</section>
+
+<section>
+  <div class="eyebrow">Levels of analysis</div>
+  <h2>Where each linguistic level fits</h2>
+  <p>Speech can be studied at several levels. This shows what the system uses today and what we propose to add.</p>
+  <div class="tbl">
+  <table>
+    <thead><tr><th>Level</th><th>Used today</th><th>Proposed next</th></tr></thead>
+    <tbody>
+      <tr><td>Acoustic</td><td>Log-mel spectrogram inside Whisper; silence trimming; augmentation (reverb, noise, low-pass).</td><td><b>Formants F1/F2</b>, vowel space area (VSA) and formant centralization ratio (FCR) from the sustained vowel and reading passage; eGeMAPS features via openSMILE.</td></tr>
+      <tr><td>Voice quality / phonatory</td><td>None explicitly.</td><td>F0 mean and range, jitter, shimmer, harmonics-to-noise ratio (Praat/parselmouth) from the sustained "ahhh".</td></tr>
+      <tr><td>Prosodic / motor timing</td><td>Loop guard uses clip length to bound output.</td><td>Speech rate, pause ratio, DDK rate and regularity from pa-ta-ka.</td></tr>
+      <tr><td>Phonetic</td><td>Weighted edit distance with dysarthric confusion costs (voicing, h, doubling).</td><td>Learn the confusion costs per speaker from data instead of writing them by hand.</td></tr>
+      <tr><td>Phonemic</td><td>Kölner Phonetik codes (letter-to-sound classes) and German variant rules.</td><td>True phoneme strings via G2P and forced alignment (e.g. Montreal Forced Aligner) to find which phonemes each person loses.</td></tr>
+      <tr><td>Lexical</td><td>Word frequency (wordfreq) to detect non-words; personal phrase list.</td><td>Personal vocabulary grown from each user's accepted commands.</td></tr>
+      <tr><td>Syntactic / semantic</td><td>Per-question grammars; slot filling in the home dialog.</td><td>LM rescoring of phonetic candidates for real-word errors.</td></tr>
+      <tr><td>Pragmatic</td><td>Confirm-before-act and "please repeat".</td><td>Adapt the confirmation threshold to each user's measured accuracy.</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p class="muted">Why the acoustic features matter: they give a severity profile from 2 minutes of speech. We can then test whether that profile predicts how much adaptation data a new person needs, which would make onboarding cheaper.</p>
+</section>
+
+<section>
+  <div class="eyebrow">Limits</div>
+  <h2>What these results do and do not show</h2>
+  <div class="two">
+    <div class="note">
+      <h3>Limits</h3>
+      <ul>
+        <li>One speaker. The test set is 39 sentences, so one sentence moves WER by several points.</li>
+        <li>The snap rules were designed while looking at dev errors. The German sound-variant rules improved dev but not test, a sign of overfitting.</li>
+        <li>The external German dysarthric data has no license or source information. We use it for internal comparison only.</li>
+        <li>Augmentation, synthetic speech and DoRA are built but not yet evaluated.</li>
+      </ul>
+    </div>
+    <div class="note">
+      <h3>Privacy by design</h3>
+      <ul>
+        <li>Audio and transcripts never leave local or lab machines and are never committed to the code repository.</li>
+        <li>Inference runs offline on the user's own laptop.</li>
+        <li>No cloud speech APIs on patient audio unless consent covers it explicitly.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="eyebrow">Related work</div>
+  <h2>Where this sits among other projects</h2>
+  <p>Personalized ASR for dysarthria is an active field. What sets this project apart is how little data it uses, the phonetic repair layer for German, and that everything runs offline.</p>
+  <div class="tbl">
+  <table>
+    <thead><tr><th>Work</th><th>Setup</th><th>Result</th><th>What it means for us</th></tr></thead>
+    <tbody>
+      <tr><td>Huber, Kernahan &amp; Waibel 2026 [1]</td><td>One German dysarthric speaker, Whisper, full fine-tuning; 92 h of read speech plus 8.8 h of corrections from a mobile app</td><td class="num">15.8% WER with 1.4 h<br>10.7% with 22.5 h<br>9.7% with all data + corrections</td><td>Closest work to ours. We reach the same 10.7% with 12 minutes, about 100× less speech (different speaker and test set; we plan to rerun on their data). Their gain from user corrections supports our learning loop. They found LoRA worse than full fine-tuning, which we should test.</td></tr>
+      <tr><td>Google Project Euphonia [2–5]</td><td>English; over 1 million utterances from people with impaired speech; personalized models per speaker</td><td>Up to 85% lower WER than general models; personalized models beat human listeners on short phrases</td><td>Shows per-person models are the proven route. Tobin &amp; Tomanek [4]: for home automation, 63% of speakers reached the target WER with only 3–4 minutes of speech. Supports our learning-curve question.</td></tr>
+      <tr><td>VI LoRA, 2025 [6]</td><td>Bayesian (variational) LoRA; English UA-Speech and a German child speaker</td><td>Better data efficiency than plain LoRA</td><td>A drop-in alternative to our LoRA, and its uncertainty estimate could decide when to ask "Meinten Sie …?".</td></tr>
+      <tr><td>Eckert &amp; Schuppler 2025 [7]</td><td>Austrian German child with ataxic dysarthria; limited data</td><td>Compares ASR systems with fine-tuning and augmentation</td><td>Another small-data German case; relevant to our augmentation experiments.</td></tr>
+      <tr><td>Baskar et al. 2022 [8]; AdAIS [9]</td><td>wav2vec2 with speaker-adaptive features; validated on German data</td><td>Steady gains across severity levels on UASpeech</td><td>Earlier German speaker adaptation; a baseline family to compare against.</td></tr>
+      <tr><td>ISi-Speech, Fraunhofer IDMT [10]</td><td>German speech training app for Parkinson's, MS and post-stroke dysarthria; BMBF funded</td><td>Became the app "Sprechen!"</td><td>Existing German work in the space. It targets therapy, while we target device control.</td></tr>
+      <tr><td>Rexeis, Petrik &amp; Kubin 2012 [11]</td><td>Acoustic and lexical adaptation of a pre-deep-learning German recognizer</td><td>Early German work</td><td>Historical baseline; our phonetic lexicon step echoes their lexical adaptation.</td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<section>
+  <div class="eyebrow">Proposed · learning loop</div>
+  <h2>Teaching the model through daily use</h2>
+  <p>When the system is unsure it already asks "Meinten Sie …?" and offers two or three options. Each time he picks one, he gives us something valuable: the correct text for that recording, and the wrong texts the model found plausible. Today that information is thrown away. We propose to keep it (locally, with consent) and learn from it in three stages, from simplest to most ambitious.</p>
+  <div class="tbl">
+  <table>
+    <thead><tr><th>Stage</th><th>How it learns</th><th>What it fixes</th></tr></thead>
+    <tbody>
+      <tr><td>1 · Confirmed labels</td><td>Save each picked option with its audio as a new training pair. Retrain the adapter every week or two, the same way as onboarding.</td><td>Adds real everyday speech (tired days, noisy rooms, new words) without extra recording sessions. The most reliable first step.</td></tr>
+      <tr><td>2 · Preference learning (the reinforcement-learning part)</td><td>For the same audio, the picked option is "preferred" and the rejected ones are "dispreferred". Direct Preference Optimization (DPO) trains the adapter to raise the preferred text and lower the others, with no separate reward model. A policy-gradient variant uses "picked" as the reward.</td><td>The rejected options are exactly the confusions this person's speech causes (e.g. voiced vs voiceless consonants), so the model unlearns them directly.</td></tr>
+      <tr><td>3 · Tuning the rules</td><td>Use the picks to update the phonetic confusion costs in snap and the confidence threshold for asking, per person.</td><td>Fewer confirmation questions over time, without retraining the neural model.</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <div class="two">
+    <div class="note">
+      <h3>Safeguards</h3>
+      <ul>
+        <li>Always offer "none of these", so he is never forced to pick a wrong option.</li>
+        <li>Train only on choices he made, never on answers the system accepted by itself, so errors do not feed back into the model.</li>
+        <li>The held-out test set never changes. A new adapter replaces the old one only if test WER does not get worse.</li>
+        <li>People sometimes pick a "close enough" option to save effort. Review a sample of picks with a carer or therapist.</li>
+        <li>Storing daily-use audio needs its own consent, and it stays on the device or lab machine.</li>
+      </ul>
+    </div>
+    <div class="note">
+      <h3>Why it matters for scaling</h3>
+      <p>If daily use keeps improving the model, a new person could start with 2–5 minutes of recordings instead of 12 and let the system learn the rest. Onboarding then becomes shorter and cheaper. The research question: how many picks equal one minute of scripted recording?</p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="eyebrow">Roadmap</div>
+  <h2>From one speaker to many</h2>
+  <div class="tbl">
+  <table>
+    <thead><tr><th>Step</th><th>What and why</th></tr></thead>
+    <tbody>
+      <tr><td>1 · Equal-footing comparison</td><td>Run our pipeline with 12 minutes of the published study's speaker [1, 20] and score it on their test set.</td></tr>
+      <tr><td>2 · Least data that works</td><td>Adapters on 2, 5 and 12 minutes of recordings, to set the real cost of onboarding.</td></tr>
+      <tr><td>3 · More users</td><td>10–20 German speakers with dysarthria from different causes.</td></tr>
+      <tr><td>4 · Shared starting model</td><td>Trained on many speakers, plus a small personal adapter, to cut recording time per new user.</td></tr>
+      <tr><td>5 · Home use with the learning loop</td><td>Measure wrong actions, confirmations and error rate over weeks of daily use.</td></tr>
+      <tr><td>6 · wav2vec2 version</td><td>A CTC recognizer (German XLS-R) on the same data. CTC models cannot loop or invent fluent text, and their output suits the phonetic repair step [26].</td></tr>
+      <tr><td>7 · ImageBind experiment</td><td>Match the sound of a command to its meaning in a shared embedding space, as a second opinion next to the transcript; later add lip video [27]. Weights are licensed for research only.</td></tr>
+      <tr><td>8 · Smarter correction</td><td>A language model chooses between sound-alike candidates; check the German sound-variant rules on more speakers.</td></tr>
+      <tr><td>9 · Acoustic profile</td><td>Formants, pitch, voice quality and speech rate per user, to predict how much adaptation will help.</td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<section>
+  <div class="eyebrow">References</div>
+  <h2>Citations</h2>
+  <ol class="refs">
+    <li>Huber, C., Kernahan, L., &amp; Waibel, A. (2026). Adapting Foundation ASR Models to Dysarthric Speech: A Case Study. arXiv:2606.31722. <a href="https://arxiv.org/abs/2606.31722">arxiv.org/abs/2606.31722</a></li>
+    <li>Google Research. Project Euphonia. <a href="https://sites.research.google/euphonia/about/">sites.research.google/euphonia</a></li>
+    <li>Shor, J., Emanuel, D., Lang, O., et al. (2019). Personalizing ASR for Dysarthric and Accented Speech with Limited Data. Interspeech 2019. <a href="https://arxiv.org/abs/1907.13511">arXiv:1907.13511</a></li>
+    <li>Tobin, J., &amp; Tomanek, K. (2022). Personalized Automatic Speech Recognition Trained on Small Disordered Speech Datasets. ICASSP 2022, 6637–6641. <a href="https://arxiv.org/abs/2110.04612">arXiv:2110.04612</a></li>
+    <li>Green, J. R., MacDonald, R. L., Jiang, P.-P., et al. (2021). Automatic Speech Recognition of Disordered Speech: Personalized Models Outperforming Human Listeners on Short Phrases. Interspeech 2021, 4778–4782. <a href="https://www.isca-archive.org/interspeech_2021/green21_interspeech.html">ISCA archive</a></li>
+    <li>Variational Low-Rank Adaptation for Personalized Impaired Speech Recognition (2025). ICASSP 2026. <a href="https://arxiv.org/abs/2509.20397">arXiv:2509.20397</a></li>
+    <li>Eckert, L., &amp; Schuppler, B. (2025). Automatic Speech Recognition for a Dysarthric Child Speaking Austrian German. Forum Acusticum Euronoise 2025. <a href="https://dael.euracoustics.org/confs/fa2025/data/articles/000168.pdf">PDF</a></li>
+    <li>Baskar, M. K., Herzig, T., Nguyen, D., Diez, M., Polzehl, T., Burget, L., &amp; Černocký, J. (2022). Speaker adaptation for Wav2vec2 based dysarthric ASR. Interspeech 2022, 3403–3407. <a href="https://arxiv.org/abs/2204.00770">arXiv:2204.00770</a></li>
+    <li>AdAIS: Adaptation of ASR for Impaired Speech with minimum resources. Humane AI Net project TMP-012. <a href="https://www.humane-ai.eu/project/tmp-012/">humane-ai.eu</a></li>
+    <li>Fraunhofer IDMT. ISi-Speech. <a href="https://www.idmt.fraunhofer.de/en/institute/projects-products/projects/isi-speech.html">idmt.fraunhofer.de</a></li>
+    <li>Rexeis, S., Petrik, S., &amp; Kubin, G. (2012). Automatische Spracherkennung für Sprecher mit Dysarthrie. DAGA 2012.</li>
+    <li>Radford, A., Kim, J. W., Xu, T., Brockman, G., McLeavey, C., &amp; Sutskever, I. (2023). Robust Speech Recognition via Large-Scale Weak Supervision (Whisper). ICML 2023. <a href="https://arxiv.org/abs/2212.04356">arXiv:2212.04356</a></li>
+    <li>Hu, E. J., Shen, Y., Wallis, P., et al. (2022). LoRA: Low-Rank Adaptation of Large Language Models. ICLR 2022. <a href="https://arxiv.org/abs/2106.09685">arXiv:2106.09685</a></li>
+    <li>Park, D. S., Chan, W., Zhang, Y., et al. (2019). SpecAugment: A Simple Data Augmentation Method for Automatic Speech Recognition. Interspeech 2019. <a href="https://arxiv.org/abs/1904.08779">arXiv:1904.08779</a></li>
+    <li>Postel, H. J. (1969). Die Kölner Phonetik: Ein Verfahren zur Identifizierung von Personennamen auf der Grundlage der Gestaltanalyse. IBM-Nachrichten 19, 925–931.</li>
+    <li>Rafailov, R., Sharma, A., Mitchell, E., et al. (2023). Direct Preference Optimization: Your Language Model is Secretly a Reward Model. NeurIPS 2023. <a href="https://arxiv.org/abs/2305.18290">arXiv:2305.18290</a></li>
+    <li>Rudzicz, F., Namasivayam, A. K., &amp; Wolff, T. (2012). The TORGO database of acoustic and articulatory speech from speakers with dysarthria. Language Resources and Evaluation 46(4), 523–541.</li>
+    <li>Kim, H., Hasegawa-Johnson, M., Perlman, A., et al. (2008). Dysarthric speech database for universal access research (UASpeech). Interspeech 2008.</li>
+    <li>Speech Accessibility Project, University of Illinois. <a href="https://speechaccessibilityproject.beckman.illinois.edu/">speechaccessibilityproject.beckman.illinois.edu</a></li>
+    <li>chuber/dysarthric-speech. German, one speaker, about 23,000 read and 4,400 correction utterances; gated, CC BY-NC 4.0. Dataset for [1]. <a href="https://huggingface.co/datasets/chuber/dysarthric-speech">huggingface.co</a></li>
+    <li>B-Czarnetzki/dysarthric_german. About 1,270 German dysarthric clips; no license or source stated, so used only for internal comparison. <a href="https://huggingface.co/datasets/B-Czarnetzki/dysarthric_german">huggingface.co</a></li>
+    <li>Liu, S.-Y., Wang, C.-Y., Yin, H., et al. (2024). DoRA: Weight-Decomposed Low-Rank Adaptation. ICML 2024. <a href="https://arxiv.org/abs/2402.09353">arXiv:2402.09353</a></li>
+    <li>Eyben, F., Scherer, K. R., Schuller, B. W., et al. (2016). The Geneva Minimalistic Acoustic Parameter Set (GeMAPS) for Voice Research and Affective Computing. IEEE Transactions on Affective Computing 7(2), 190–202.</li>
+    <li>McAuliffe, M., Socolof, M., Mihuc, S., Wagner, M., &amp; Sonderegger, M. (2017). Montreal Forced Aligner. Interspeech 2017.</li>
+    <li>Darley, F. L., Aronson, A. E., &amp; Brown, J. R. (1975). Motor Speech Disorders. Saunders. (Source of the Grandfather passage in clinical use.)</li>
+    <li>Baevski, A., Zhou, H., Mohamed, A., &amp; Auli, M. (2020). wav2vec 2.0: A Framework for Self-Supervised Learning of Speech Representations. NeurIPS 2020. <a href="https://arxiv.org/abs/2006.11477">arXiv:2006.11477</a></li>
+    <li>Girdhar, R., El-Nouby, A., Liu, Z., et al. (2023). ImageBind: One Embedding Space To Bind Them All. CVPR 2023. <a href="https://arxiv.org/abs/2305.05665">arXiv:2305.05665</a></li>
+    <li>Software: whisper.cpp / ggml (G. Gerganov); PEFT (Hugging Face); wordfreq (R. Speer); Praat (P. Boersma &amp; D. Weenink); base model primeline/whisper-large-v3-turbo-german.</li>
+  </ol>
+</section>
+
+<footer>All numbers come from the project's evaluation runs. The speaker is anonymized; no audio or transcripts of his speech are included on this page. Examples shown are generic German words. · <a href="https://github.com/alejandroniculescu/irregular_voice_google">Source on GitHub</a></footer>
+
+</div>
+<script type="module">
+import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+const dark = matchMedia("(prefers-color-scheme: dark)").matches;
+mermaid.initialize({startOnLoad: true, theme: dark ? "dark" : "neutral", fontFamily: "IBM Plex Sans, sans-serif"});
+</script>
+</body>
+</html>

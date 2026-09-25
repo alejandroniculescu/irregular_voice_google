@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 300" width="720" height="300" role="img" aria-label="Word and character error rate on 39 test clips: base model 55.4% WER, LoRA plus snap 10.7% WER">
+<style>
+svg{--bg:#FFFFFF;--ink:#1C2230;--muted:#5A6272;--rule:#DADDD6;--accent:#2C5D8A;--ok:#2E7D4F}
+@media (prefers-color-scheme:dark){svg{--bg:#1B2029;--ink:#E6E8EC;--muted:#9BA3B2;--rule:#2C3340;--accent:#7FB0DD;--ok:#79C898}}
+text{font-family:"IBM Plex Sans",-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;fill:var(--ink)}
+.m{fill:var(--muted);font-size:12px}.l{font-size:14px}.v{font-size:12px;font-weight:600}
+</style>
+<rect width="720" height="300" rx="8" fill="var(--bg)" stroke="var(--rule)"/>
+<text x="24" y="34" font-size="16" font-weight="600">Error rate on 39 held-out test clips (lower is better)</text>
+<rect x="24" y="48" width="12" height="12" fill="var(--accent)"/><text x="42" y="58" class="m">Word error rate (WER)</text>
+<rect x="200" y="48" width="12" height="12" fill="var(--muted)" opacity=".55"/><text x="218" y="58" class="m">Character error rate (CER)</text>
+<line x1="170.0" y1="80" x2="170.0" y2="260" stroke="var(--rule)"/><text x="170.0" y="278" class="m" text-anchor="middle">0%</text>
+<line x1="251.7" y1="80" x2="251.7" y2="260" stroke="var(--rule)"/><text x="251.7" y="278" class="m" text-anchor="middle">10%</text>
+<line x1="333.3" y1="80" x2="333.3" y2="260" stroke="var(--rule)"/><text x="333.3" y="278" class="m" text-anchor="middle">20%</text>
+<line x1="415.0" y1="80" x2="415.0" y2="260" stroke="var(--rule)"/><text x="415.0" y="278" class="m" text-anchor="middle">30%</text>
+<line x1="496.7" y1="80" x2="496.7" y2="260" stroke="var(--rule)"/><text x="496.7" y="278" class="m" text-anchor="middle">40%</text>
+<line x1="578.3" y1="80" x2="578.3" y2="260" stroke="var(--rule)"/><text x="578.3" y="278" class="m" text-anchor="middle">50%</text>
+<line x1="660.0" y1="80" x2="660.0" y2="260" stroke="var(--rule)"/><text x="660.0" y="278" class="m" text-anchor="middle">60%</text>
+<text x="158" y="106" class="l" text-anchor="end">Base model</text>
+<rect x="170" y="90" width="452.4" height="14" rx="2" fill="var(--accent)"/><text x="628.4" y="102" class="v">55.4%</text>
+<rect x="170" y="107" width="199.3" height="9" rx="2" fill="var(--muted)" opacity=".55"/><text x="375.3" y="116" class="m">24.4%</text>
+<text x="158" y="151" class="l" text-anchor="end">Base + snap</text>
+<rect x="170" y="135" width="438.6" height="14" rx="2" fill="var(--accent)"/><text x="614.5" y="147" class="v">53.7%</text>
+<rect x="170" y="152" width="202.5" height="9" rx="2" fill="var(--muted)" opacity=".55"/><text x="378.5" y="161" class="m">24.8%</text>
+<text x="158" y="196" class="l" text-anchor="end">Personal LoRA</text>
+<rect x="170" y="180" width="107.8" height="14" rx="2" fill="var(--accent)"/><text x="283.8" y="192" class="v">13.2%</text>
+<rect x="170" y="197" width="35.1" height="9" rx="2" fill="var(--muted)" opacity=".55"/><text x="211.1" y="206" class="m">4.3%</text>
+<text x="158" y="241" class="l" text-anchor="end" font-weight="600">LoRA + snap</text>
+<rect x="170" y="225" width="87.4" height="14" rx="2" fill="var(--ok)"/><text x="263.4" y="237" class="v">10.7%</text>
+<rect x="170" y="242" width="32.7" height="9" rx="2" fill="var(--muted)" opacity=".55"/><text x="208.7" y="251" class="m">4.0%</text>
+</svg>
