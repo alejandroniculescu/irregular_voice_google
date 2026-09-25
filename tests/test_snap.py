@@ -12,6 +12,7 @@ def test_edits():
     assert edits("geklabt", "geklappt") == 1  # b->p and the doubled p cost half each
     assert edits("geklabt", "geklebt") == 1
     assert edits("kinn", "kinn") == 0
+    assert edits("sagt", "sägt") == 1 and edits("sagt", "sägt", slurred=True) == 0.5  # ä/a halves only when slurred
 
 
 def test_snaps_non_word_to_same_sounding_word(snapper):
@@ -19,8 +20,16 @@ def test_snaps_non_word_to_same_sounding_word(snapper):
     assert snapper.word("Opfel") == "Apfel"  # keeps the capital
 
 
+def test_snaps_tricky_german_sounds(snapper):
+    assert snapper.word("Tramme") == "Stramme"  # lost initial s
+    assert snapper.word("Rücksichtloser") == "Rücksichtsloser"  # lost linking s (a rare "real" word, zipf 1.1)
+    assert snapper.word("Zöpfer") == "Zöpfe"
+    assert snapper.word("Härber") == "Herber"  # ä/e
+    assert snapper.text("Gro\u0308ße Zieege.") == "Größe Ziege."  # a decomposed umlaut stays one word
+
+
 def test_leaves_real_and_rare_words(snapper):
-    for w in ["geklappt", "Bügelbrett", "pufft", "blechern", "Jara"]:
+    for w in ["geklappt", "Bügelbrett", "pufft", "blechern", "Jara", "Kelle", "roden", "Ferse"]:
         assert snapper.word(w) == w
 
 
