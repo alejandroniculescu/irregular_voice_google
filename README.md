@@ -1,4 +1,4 @@
-# Personal Voice Control for Dysarthria
+# Personal Voice Control for atypical speech using LoRA
 
 Speech recognition that learns one person's voice from 12 minutes of
 recordings, runs offline on a laptop, and never acts on a command it is unsure
