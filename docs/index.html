@@ -162,7 +162,7 @@ footer a{color:inherit}
         <li><b>Private and cheap to run:</b> daily recognition runs offline on an ordinary laptop, with no cloud service.</li>
         <li><b>Gets better with use (next):</b> each choice the user makes becomes training data.</li>
         <li><b>Less recording per new user (planned):</b> a shared starting model plus a small personal adapter.</li>
-        <li><b>Beyond Whisper:</b> a wav2vec2 version, then an ImageBind experiment that matches a command's sound to its meaning.</li>
+        <li><b>Beyond Whisper:</b> a wav2vec2 version is in progress. It cannot loop or invent fluent text, and it can score each allowed command directly.</li>
       </ul>
     </div>
   </div>
@@ -430,7 +430,7 @@ flowchart TB
       <tr><td>4 · Shared starting model</td><td>Trained on many speakers, plus a small personal adapter, to cut recording time per new user.</td></tr>
       <tr><td>5 · Home use with the learning loop</td><td>Measure wrong actions, confirmations and error rate over weeks of daily use.</td></tr>
       <tr><td>6 · wav2vec2 version</td><td>A CTC recognizer (German XLS-R) on the same data. CTC models cannot loop or invent fluent text, and their output suits the phonetic repair step [26].</td></tr>
-      <tr><td>7 · ImageBind experiment</td><td>Match the sound of a command to its meaning in a shared embedding space, as a second opinion next to the transcript; later add lip video [27]. Weights are licensed for research only.</td></tr>
+      <tr><td>7 · Command scoring</td><td>With wav2vec2, score how well the audio fits each allowed command instead of transcribing first, for cleaner "ask when unsure" decisions.</td></tr>
       <tr><td>8 · Smarter correction</td><td>A language model chooses between sound-alike candidates; check the German sound-variant rules on more speakers.</td></tr>
       <tr><td>9 · Acoustic profile</td><td>Formants, pitch, voice quality and speech rate per user, to predict how much adaptation will help.</td></tr>
     </tbody>
@@ -468,7 +468,6 @@ flowchart TB
     <li>McAuliffe, M., Socolof, M., Mihuc, S., Wagner, M., &amp; Sonderegger, M. (2017). Montreal Forced Aligner. Interspeech 2017.</li>
     <li>Darley, F. L., Aronson, A. E., &amp; Brown, J. R. (1975). Motor Speech Disorders. Saunders. (Source of the Grandfather passage in clinical use.)</li>
     <li>Baevski, A., Zhou, H., Mohamed, A., &amp; Auli, M. (2020). wav2vec 2.0: A Framework for Self-Supervised Learning of Speech Representations. NeurIPS 2020. <a href="https://arxiv.org/abs/2006.11477">arXiv:2006.11477</a></li>
-    <li>Girdhar, R., El-Nouby, A., Liu, Z., et al. (2023). ImageBind: One Embedding Space To Bind Them All. CVPR 2023. <a href="https://arxiv.org/abs/2305.05665">arXiv:2305.05665</a></li>
     <li>Software: whisper.cpp / ggml (G. Gerganov); PEFT (Hugging Face); wordfreq (R. Speer); Praat (P. Boersma &amp; D. Weenink); base model primeline/whisper-large-v3-turbo-german.</li>
   </ol>
 </section>

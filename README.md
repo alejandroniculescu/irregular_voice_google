@@ -44,9 +44,8 @@ the system carried out **0 wrong commands**: when it was unsure, it asked.
   so the model improves at home without new recording sessions.
 - *Less recording per new user (planned):* a shared starting model trained on many
   speakers, with a small personal adapter on top.
-- *Beyond Whisper:* a **wav2vec2** version is next (it cannot loop or invent
-  fluent text), then an **ImageBind** experiment that matches the sound of a
-  command to its meaning directly and can later add lip video.
+- *Beyond Whisper:* a **wav2vec2** version is in progress. It cannot loop or
+  invent fluent text, and it can score each allowed command directly.
 
 **Model:** [whisper-large-v3-turbo-german-lora (q5_0, whisper.cpp)](https://huggingface.co/alejandroniculescu/whisper-large-v3-turbo-german-lora-20260923-182243-q5_0.bin)
 
@@ -143,9 +142,9 @@ audio.
    and error rate over weeks.
 6. **wav2vec2 version** of the recognizer (CTC, German XLS-R), compared
    directly with Whisper on the same data.
-7. **ImageBind experiment:** match the sound of a command to its meaning, as a
-   second opinion next to the transcript; later add lip video. (ImageBind's
-   weights are licensed for research only.)
+7. **Command scoring:** with wav2vec2, score how well the audio fits each
+   allowed command instead of transcribing first, for cleaner "ask when
+   unsure" decisions.
 8. **Smarter correction:** use context to choose between sound-alike words,
    and check the extra German sound-variant rules on more speakers.
 9. **Acoustic profile** per user (formants, pitch, voice quality, rate) to
@@ -245,5 +244,4 @@ Status: ✅ measured in the best system · 🔧 built, not used in best model ·
 23. Eyben, F., et al. (2016). The Geneva Minimalistic Acoustic Parameter Set (GeMAPS). IEEE Trans. Affective Computing 7(2).
 24. McAuliffe, M., et al. (2017). Montreal Forced Aligner. Interspeech 2017.
 25. Baevski, A., et al. (2020). wav2vec 2.0: A Framework for Self-Supervised Learning of Speech Representations. NeurIPS 2020. [arXiv:2006.11477](https://arxiv.org/abs/2006.11477)
-26. Girdhar, R., et al. (2023). ImageBind: One Embedding Space To Bind Them All. CVPR 2023. [arXiv:2305.05665](https://arxiv.org/abs/2305.05665)
-27. Software: whisper.cpp / ggml, PEFT, wordfreq, Praat.
+26. Software: whisper.cpp / ggml, PEFT, wordfreq, Praat.
