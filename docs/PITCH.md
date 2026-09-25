@@ -1,52 +1,74 @@
 # Personal Voice Control for Dysarthria
 
+Speech recognition that learns one person's voice from 12 minutes of
+recordings, runs offline on a laptop, and never acts on a command it is unsure
+of.
+
 ## TL;DR
 
-Standard speech recognition fails for people with dysarthria: the best open
-German Whisper model got more than half the words wrong for our speaker
-(55.4% WER). With **12 minutes** of his speech and a small LoRA adapter we cut
-that to **13.2%**, and a phonetic repair step based on Kölner Phonetik brings it
-to **10.7%**. The system runs offline on a laptop, asks before acting when it is
-unsure, and in a command test it never executed a wrong command.
+**How well it works.** Standard German speech recognition got more than half
+the words wrong for our first user (55.4% word error rate). With **12
+minutes** of his recordings, a personal adapter and a sound-based correction
+step bring that down to **10.7%**, about 5× fewer errors. Spelling-level
+accuracy is **96%** (4.0% character error rate). In a replay of 15 commands
+the system carried out **0 wrong commands**: when it was unsure, it asked.
 
-The adapter does **not** transfer to other speakers; it makes them worse
-(60.6% → 109.4% WER). So the next step is an onboarding method that gives each
-person their own adapter, needs as little recording as possible, and keeps
-learning from the options each user picks.
+**Why this is the right approach.**
+- *Personal, not generic.* Adapters don't carry over between people: our
+  adapter makes other speakers with dysarthria worse (60.6% → 109.4% error).
+  Everyone needs their own model, so the product is a fast way to make one.
+- *The errors left are near misses.* After adaptation, words are wrong but
+  letters are mostly right (13.2% word vs 4.3% character errors), e.g.
+  *geklabt* for *geklappt*. That is exactly what sound-based matching fixes,
+  and it does: 13.2% → 10.7%.
+- *Safe by design.* When the system is unsure it offers 2–3 choices
+  ("Meinten Sie …?") instead of guessing, so a mistake costs one tap, not a
+  wrong action.
+- *In line with the research.* The closest published study reached a similar
+  error rate (10.7%) for one German speaker using 22.5 hours of speech [1]; we
+  used 12 minutes (different speaker and test set, so not directly
+  comparable). Google's Project Euphonia found 3–4 minutes per person enough
+  for home control for 63% of speakers [4].
 
-- **Model:** [whisper-large-v3-turbo-german-lora (q5_0, whisper.cpp)](https://huggingface.co/alejandroniculescu/whisper-large-v3-turbo-german-lora-20260923-182243-q5_0.bin)
-- **Coming next:** a second version built on **wav2vec2** (CTC), to compare
-  against Whisper. CTC models emit characters frame by frame without a language
-  model decoder, so they cannot loop or invent fluent text, and their output
-  suits the phonetic repair step.
-- **After that:** an **ImageBind** experiment. ImageBind maps audio, text,
-  images and other modalities into one embedding space, so a spoken command
-  could be matched to its meaning directly, as a second opinion next to the
-  transcript, and video of the lips could be added later.
+**How it scales.**
+- *Short onboarding:* ~350 short prompts (~12 min of speech), then a scripted
+  pipeline trains, compresses and installs a 0.57 GB personal model.
+- *Private and cheap to run:* daily recognition runs offline on an ordinary
+  laptop, with no cloud service; recordings are used only for training on a
+  trusted machine.
+- *Gets better with use (next):* each choice the user makes becomes training data,
+  so the model improves at home without new recording sessions.
+- *Less recording per new user (planned):* a shared starting model trained on many
+  speakers, with a small personal adapter on top.
+- *Beyond Whisper:* a **wav2vec2** version is next (it cannot loop or invent
+  fluent text), then an **ImageBind** experiment that matches the sound of a
+  command to its meaning directly and can later add lip video.
 
-The speaker is anonymized. No audio or transcripts of his speech are in this
-repository; examples below are generic German words.
+**Model:** [whisper-large-v3-turbo-german-lora (q5_0, whisper.cpp)](https://huggingface.co/alejandroniculescu/whisper-large-v3-turbo-german-lora-20260923-182243-q5_0.bin)
 
-## Headline numbers
+The user is anonymized. No audio or transcripts of his speech are in this
+repository; examples here are generic German words.
 
-Held-out test set, 39 clips of sentences never seen in training.
+## Results
 
-| System | WER | CER |
+Held-out test set: 39 recordings of sentences never seen in training.
+
+| System | Word errors (WER) | Character errors (CER) |
 | --- | ---: | ---: |
-| Base German Whisper | 55.4% | 24.4% |
-| Base + phonetic snap | 53.7% | 24.8% |
-| + personal LoRA | 13.2% | 4.3% |
-| + LoRA + phonetic snap | **10.7%** | **4.0%** |
-| Other German dysarthric speakers (125 clips), base | 60.6% | 32.5% |
-| Other German dysarthric speakers, + his LoRA | 109.4% | 68.3% |
+| Standard German Whisper | 55.4% | 24.4% |
+| + sound-based correction | 53.7% | 24.8% |
+| + personal adapter (12 min) | 13.2% | 4.3% |
+| **+ personal adapter + sound-based correction** | **10.7%** | **4.0%** |
 
-Command replay (15 commands): 12 accepted (all correct), 2 confirmed (correct),
-1 repeat, **0 wrong commands executed**.
+Command replay (15 commands): 12 carried out correctly, 2 confirmed by the
+user and then carried out correctly, 1 asked to repeat, **0 wrong actions**.
 
-WER above 100% means the output has more wrong or inserted words than the
-reference has words.
+Does one person's adapter help others? No. On 125 recordings of other German
+speakers with dysarthria, the standard model has 60.6% WER and our user's
+adapter 109.4%. (WER above 100% means more wrong or extra words than the
+sentence has.)
 
-## Pipeline
+## How it works
 
 ```mermaid
 flowchart TB
@@ -78,23 +100,55 @@ flowchart TB
   P -.->|updated adapter| U
 ```
 
-## Why phonemic repair: the WER–CER gap
+## Why sound-based correction: the WER–CER gap
 
-- **After adaptation, errors are small.** With the LoRA, WER is 13.2% but CER
-  only 4.3%. Most wrong words are off by a letter or two (*geklabt* for
-  *geklappt*, *Seben* for *Sieben*). A near-miss costs a full word in WER.
-  Kölner Phonetik gives near-miss words the same code, and a weighted edit
-  distance prefers dysarthric confusions (voicing, dropped h, doubled
-  consonants). Snap lowers WER 13.2% → 10.7% while CER barely moves.
-- **Before adaptation, errors are too large.** Base CER is 24.4%: whole words
-  are wrong. Snap barely helps there (55.4% → 53.7%).
+- **After adaptation, errors are small.** WER 13.2% but CER only 4.3%: most
+  wrong words are off by a letter or two (*geklabt* for *geklappt*, *Seben* for
+  *Sieben*). Kölner Phonetik gives such near misses the same sound code, and a
+  weighted edit distance prefers the likely confusions (voicing, a silent h,
+  doubled consonants). Correction lowers WER 13.2% → 10.7%.
+- **Before adaptation, errors are too large.** CER 24.4%: whole words are
+  wrong, and correction barely helps (55.4% → 53.7%).
 - **So the order matters:** the adapter gets the output close in sound, then
-  sound-based repair finishes the job.
+  sound-based correction finishes the job.
 
-Kölner Phonetik groups letters into sound classes. It approximates phonemes; a
-true phoneme-level analysis (G2P + forced alignment) is proposed below.
+## Learning from each choice
 
-## Algorithm inventory
+When unsure, the system shows 2–3 options. Each pick gives the correct text for
+that recording, plus the wrong texts the model found plausible.
+
+1. **Confirmed labels:** picked option + audio become new training data.
+2. **Preference learning:** picked vs rejected options train the model to
+   prefer the right one (Direct Preference Optimization, DPO).
+3. **Tuning:** picks adjust the correction costs and when to ask.
+
+Safeguards: always a "none of these" option; train only on the user's own
+choices; a fixed test set, so a new model ships only if it is at least as
+good; a carer or therapist can review picks; consent for storing daily-use
+audio.
+
+## Roadmap
+
+1. **Least data that works:** results with 2, 5 and 12 minutes of recordings.
+2. **More users:** 10–20 German speakers with dysarthria from different causes.
+3. **Shared starting model:** trained on many speakers, plus a small personal
+   adapter, to cut recording time per new user.
+4. **Home use with the learning loop:** measure wrong actions, confirmations
+   and error rate over weeks.
+5. **wav2vec2 version** of the recognizer (CTC, German XLS-R), compared
+   directly with Whisper on the same data.
+6. **ImageBind experiment:** match the sound of a command to its meaning, as a
+   second opinion next to the transcript; later add lip video. (ImageBind's
+   weights are licensed for research only.)
+7. **Smarter correction:** use context to choose between sound-alike words,
+   and check the extra German sound-variant rules on more speakers.
+8. **Acoustic profile** per user (formants, pitch, voice quality, rate) to
+   predict how much adaptation will help.
+
+## Technical details
+
+<details>
+<summary>Algorithm inventory</summary>
 
 Status: ✅ measured in the best system · 🔧 built, not used in best model ·
 ❌ tried, made things worse · 💡 proposed.
@@ -128,7 +182,10 @@ Status: ✅ measured in the best system · 🔧 built, not used in best model ·
 | Evaluation | WER/CER with German normalization (ß→ss, digits, letter names, hyphens) | `text.py`, `evaluate.py` | Adapter 14.9% → 13.2% | ✅ |
 | Evaluation | Cross-speaker transfer test | `scripts/external_dysarthric_german.py` | 109.4% vs 60.6% | ✅ |
 
-## Levels of analysis
+</details>
+
+<details>
+<summary>Levels of analysis</summary>
 
 | Level | Used today | Proposed |
 | --- | --- | --- |
@@ -141,54 +198,7 @@ Status: ✅ measured in the best system · 🔧 built, not used in best model ·
 | Syntactic / semantic | Per-question grammars; slot filling | LM rescoring of phonetic candidates |
 | Pragmatic | Confirm before acting | Per-user confirmation threshold |
 
-## Learning loop (proposed)
-
-When unsure, the system asks "Meinten Sie …?" with 2–3 options. Each pick gives
-the correct text for that audio and the wrong texts the model found plausible.
-
-1. **Confirmed labels:** picked option + audio become training pairs; retrain
-   every 1–2 weeks.
-2. **Preference learning (the RL part):** picked vs rejected options form
-   preference pairs for Direct Preference Optimization (DPO).
-3. **Rule tuning:** picks update snap's confusion costs and the confirmation
-   threshold.
-
-Safeguards: always offer "none of these"; train only on user choices, never on
-self-accepted answers; the held-out test set never changes and a new adapter
-ships only if test WER holds; review a sample of picks with a carer or
-therapist; separate consent for storing daily-use audio.
-
-## Next steps
-
-1. Learning curve on existing data (2, 5, 12 minutes).
-2. Evaluate augmentation, synthetic commands and DoRA.
-3. Log choices in the demo (with consent).
-4. LM rescoring of snap candidates.
-5. Acoustic profile from protocol recordings (formants, F0, jitter/shimmer, DDK).
-6. Check the German sound-variant rules in snap on a second speaker (dev 11.0% → 8.8%, test unchanged, so possibly overfit).
-7. Contact clinical and linguistics partners; start ethics application.
-8. LoRA vs full fine-tuning at 12 minutes (Huber et al. found full fine-tuning
-   better with many hours).
-9. **wav2vec2 version** of the recognizer (CTC, German XLS-R base) with the same
-   splits, snap and dialog, for a direct comparison with Whisper.
-10. **ImageBind experiment:** match audio embeddings of his commands against
-    text embeddings of the command list, and compare with transcript + snap.
-    Later, add lip video as a second input. Note: ImageBind weights are
-    CC BY-NC 4.0 (research use only).
-11. Grant draft.
-
-## Funding plan
-
-1. **Recruit and record** 10–20 German speakers with dysarthria across causes,
-   with ethics approval and consent; ~350 prompts (~12 min) each.
-2. **Learning curve:** least data that works per person.
-3. **Pooled starting point:** shared dysarthric adapter + small personal one.
-4. **Acoustic severity profile:** does it predict adaptation gain?
-5. **Home trial with the learning loop:** accept/confirm/repeat rates, wrong
-   actions, WER over weeks.
-
-Budget lines: participant sessions, compute (one lab GPU), research assistant,
-clinical and linguistic partners, home-trial hardware.
+</details>
 
 ## Related work
 
@@ -199,7 +209,7 @@ clinical and linguistic partners, home-trial hardware.
 | VI LoRA [6] | Bayesian LoRA; UA-Speech + German child | More data-efficient | Alternative adapter; uncertainty for when to ask |
 | Eckert & Schuppler 2025 [7] | Austrian German child, ataxic dysarthria | Small-data comparison | German small-data case |
 | Baskar et al. 2022 [8]; AdAIS [9] | wav2vec2 + speaker-adaptive features, German validation | Gains across severity | wav2vec2 baseline family |
-| ISi-Speech [10] | German speech-training app (BMBF) | App "Sprechen!" | German funding precedent |
+| ISi-Speech [10] | German speech-training app (BMBF) | App "Sprechen!" | Existing German work in the space |
 | Rexeis et al. 2012 [11] | Acoustic + lexical adaptation | Early German work | Historical baseline |
 
 ## References
