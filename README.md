@@ -150,6 +150,8 @@ audio.
 9. **Acoustic profile** per user (formants, pitch, voice quality, rate) to
    predict how much adaptation will help.
 
+Open questions for the collaboration are tracked in [docs/open_questions.md](docs/open_questions.md).
+
 ## Technical details
 
 <details>
