@@ -3,6 +3,7 @@ name = "irregular-voice-google"
 version = "0.1.0"
 description = "Personalised German speech recognition for a speaker with dysarthria."
 readme = "README.md"
+license = "Apache-2.0"
 requires-python = ">=3.13"
 authors = [
   { name = "Ale" },

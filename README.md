@@ -219,6 +219,13 @@ Status: ✅ measured in the best system · 🔧 built, not used in best model ·
 | ISi-Speech [10] | German speech-training app (BMBF) | App "Sprechen!" | Existing German work in the space |
 | Rexeis et al. 2012 [11] | Acoustic + lexical adaptation | Early German work | Historical baseline |
 
+## License
+
+The code and text in this repository are released under the Apache License 2.0; see [LICENSE](LICENSE).
+Recordings, transcripts and personal models are not part of the repository and are not covered by this
+licence. They remain the personal data of the speakers who provided them and are shared, if at all, only
+under a separate agreement with that speaker.
+
 ## References
 
 1. Huber, C., Kernahan, L., & Waibel, A. (2026). Adapting Foundation ASR Models to Dysarthric Speech: A Case Study. [arXiv:2606.31722](https://arxiv.org/abs/2606.31722)
