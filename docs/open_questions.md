@@ -16,3 +16,21 @@ personal LoRA adapter trained on Christian's voice.
   training data without hand tagging.
 - **Training.** Where the adapter is retrained (laptop, server, never on the phone), how often, from which
   data, and how a new adapter is pushed to the satellite without breaking the running one.
+
+## 2026-10-09 — to try: an on-device reply voice (NeuTTS, Neuphonic)
+
+- **What it is.** NeuTTS-Air: text-to-speech, ~0.5 B parameters (small LLM + NeuCodec), GGUF through llama.cpp,
+  runs on a phone or a Raspberry Pi, Apache 2.0, clones a voice from 3–15 s of clean reference audio, output
+  watermarked. Repo: https://github.com/neuphonic/neutts-air . German is a separate "Nano" model under
+  Neuphonic's own licence (NeuTTS Open License 1.0), to be read before anything ships.
+- **Why here.** The satellite already runs whisper.cpp (GGML) for recognition; NeuTTS would give it a reply
+  voice in the same on-device family, so the privacy line (nothing leaves the phone) holds for output as well
+  as input.
+- **Voice banking.** Cloning from a few seconds means the assistant could answer in Christian's own voice.
+  Two questions for him: does he want that at all, and which reference, since a dysarthric reference clones
+  the dysarthria; an older clean recording, or his current voice by choice. Consent is his to give for
+  himself; for anyone else the product needs an explicit step.
+- **What to measure if tried.** Latency to first audio on the phone (the README benchmarks a Galaxy A25);
+  intelligibility of the German Nano voice on the command vocabulary (resources/commands_de.txt); whether
+  the watermark survives the satellite's audio path (it should; it is the point).
+- **Not for.** Nothing on the measurement side: synthetic speech is not ground truth for anything.
