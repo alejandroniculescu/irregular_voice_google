@@ -41,6 +41,11 @@ def gruut_g2p(lang: str = "de-de"):
         for word in normalize(text).split():
             out.extend(phones_of_word(word))
         return out
+
+    # without its language pack gruut returns no phonemes for any word, and every word silently falls back to its
+    # letters (S3 was scored that way on ahms); fail instead
+    if phones_of_word("haus") == list("haus"):
+        raise RuntimeError(f"gruut has no phonemes for {lang}: install its language pack (e.g. gruut_lang_de)")
     return g2p
 
 

@@ -397,3 +397,90 @@ Short-window adapter: **failed** at a fitted window in whisper.cpp although HF d
 suspects: HF `generate` padding the cropped dev features back to 3000 (so dev never tested short windows), or a
 crop mismatch with whisper.cpp. Parked; not on the critical path.
 Next: soup at q8_0 and q4_0; the Track 2 model becomes soup-first (one pass), with the experts as the escalation.
+
+### S3 soup quantization scored (`ahms:results/sonic/20261009-223909/`, i9, 4 threads)
+**Correction (all S3 PER and vowel numbers above are wrong):** ahms `.venv-sonic` had gruut without
+`gruut_lang_de`, so gruut returned no phonemes for any German word and `per.gruut_g2p` silently fell back to letters:
+S3's "PER" was a letter error rate. WER/CER were right. Fixed: the pack is installed and `gruut_g2p` now raises when
+a language pack is missing. Rescored with German IPA (same CSVs):
+
+| model @ window | WER | CER | PER | vowel | sec/clip |
+|---|---|---|---|---|---|
+| DoRA q4_0 / q5_0 / q8_0 @ full | 23.1 / 20.7 / 18.2 % | 6.3 / 5.9 / 5.3 % | 8.8 / 8.1 / 7.2 % | 8.3 / 7.0 / 6.6 % | 5.8 / 10.3 / 7.4 |
+| DoRA q4_0 / q5_0 / q8_0 @ 1024 | 25.6 / 21.5 / 19.0 % | | 9.9 / 8.5 / 8.1 % | 8.7 / 8.7 / 8.7 % | 3.6 / 6.7 / 4.7 |
+| soup q5_0 @ full / 1024 | 13.2 / 14.0 % | 3.3 / 4.0 % | 4.6 / 5.2 % | 6.1 / 6.1 % | 10.3 / 6.7 |
+| soup q4_0 @ full / 1024 | 15.7 / 18.2 % | 4.3 / 4.8 % | 5.5 / 6.8 % | 7.0 / 7.4 % | 6.8 / 5.3 |
+| **soup q8_0 @ full** | **13.2 %** | **3.5 %** | **4.1 %** | **4.8 %** | 8.8 |
+| soup q8_0 @ 1024 | 16.5 % | 4.6 % | 5.9 % | 6.6 % | 5.0 |
+| short-window DoRA q5_0 @ fit / 512 / 1024 / full | 76.9 / 18.2 / 16.5 / 17.4 % | | 49.9 / 8.8 / 6.8 / 6.8 % | | 1.2 / 3.2 / 7.1 / 11.2 |
+
+Readings hold, numbers move: the soup roughly halves DoRA's PER (4.1–4.6 vs 7.2–8.1 %); q8_0 is the most accurate
+format and faster than q5_0 on x86; q4_0 costs ~1.5 points; the soup loses ~1.8 points at 1024. Track 2 final: soup
+q8_0 at the full window. Note for comparisons: whisper.cpp numbers here are **without snap**; the HF reference
+(DoRA PER 5.8 %) is after snap. DoRA q5_0 @ full is 7.6 % on the M3 and 8.1 % on the i9 (same file, 4/39 clips
+decode differently): no platform bug.
+
+## 2026-10-09 — S4: the cascade threshold with the soup first (written before any number)
+`track2/model.py` now decodes the soup first and escalates to the three experts (DoRA, r16, aug-synth; q5_0) when
+the soup's mean token log-prob is below t; the most confident of all four wins. t = −0.20 was inherited from the
+DoRA-first cascade and never fit for the soup. Offline, from per-clip CSVs at the full window (soup q8_0 from ahms,
+experts q5_0 from S1 on the M3; log-probs of the same model and format should agree across machines): PER, vowel
+error and share of clips escalated for t from −0.40 to 0. Second arm, added after the gruut correction and before
+its numbers: the same sweep with `snap.for_speaker` (train transcripts, commands, lexicons; never test) on the
+final; predicted −0.5 to −1.5 PER points, since snap was in the HF reference and costs milliseconds.
+Reading: ship the t in the middle of a plateau that beats the soup alone by ≥ 0.5 PER points with ≤ 50 % of clips
+escalated. If none does, the final is the soup alone, and escalation stays only as a visible demo path with a t that
+fires rarely (routing shown, not sold as a gain). t is read on the test clips, so any gain is optimistic.
+Prediction: no t passes. The soup already holds most of the mixture's gain (3.7 vs the router's 3.0 %), and
+averaged models tend to be more confident, so argmax over log-probs will mostly keep the soup; gain < 0.5 points.
+
+### Correction: every sonic PER and vowel number before this point was a letter error rate (gruut had no German)
+The same missing `gruut_lang_de` hit the Mac's `.venv-sonic` (S1, S2, kit, kit2, C1). Rescored from the saved CSVs
+with German IPA (`.venv-sonic`, pack installed; WER/CER unchanged):
+
+| run | WER | CER | PER (was) | vowel (was) |
+|---|---|---|---|---|
+| S1 DoRA / r16 / aug-synth @ full (M3, q5_0) | 19.8 / 22.3 / 26.4 % | 5.6 / 5.7 / 8.5 % | 7.6 / 7.6 / 10.8 % | 7.0 / 7.4 / 9.2 % |
+| S1 confidence router @ full | 12.4 % | 2.8 % | **3.8 %** (3.0) | 3.9 % |
+| S1 medoid @ full | 16.5 % | 4.2 % | 6.1 % | 5.2 % |
+| S2 confidence router @ 1024 / 768 | 15.7 / 16.5 % | 3.3 / 4.7 % | 4.9 / 6.2 % (3.6 / —) | 4.8 / 5.2 % |
+| kit (full window) | 14.0 % | 3.1 % | **4.0 %** (3.3) | 3.9 % (1.8) |
+| kit2 (shedding, 1024) | 16.5 % | 3.7 % | **5.3 %** (4.0) | 4.8 % (2.2) |
+
+The S1/S2 readings survive in direction (router ≫ any single expert; 768 fails, 1024 costs ~1.1 points). The S1
+threshold t = −0.05 was fit on letter rates; S4 refits it for the soup. C1 rerun (`sonic/cohort.py` now computes
+the four slot orders itself): his rate 9.1 phones/s (was 10.0); today's order saves a median 221 ms (0 % ≥ 500 ms);
+**device action room** 552 ms (62 % ≥ 500 ms; 497 ms / 50 % with vowel wildcards); short commands 331 ms. The C1
+reading holds: put the room last.
+
+### S4 scored (`scratchpad` sweep over `results/sonic/ahms_a1/soup_q8@0.csv` and S1's expert CSVs)
+| final | WER | CER | PER | vowel | clips escalated |
+|---|---|---|---|---|---|
+| soup q8_0 alone | 13.2 % | 3.5 % | 4.1 % | 4.8 % | 0 |
+| cascade t = −0.20 | 12.4 % | 2.7 % | 3.7 % | 4.4 % | 2/39 |
+| cascade t = −0.05 | 12.4 % | 2.7 % | 3.8 % | 4.4 % | 12/39 |
+| soup alone + snap | 9.1 % | 2.7 % | 3.7 % | 4.8 % | 0 |
+| **cascade t = −0.20 + snap** | **8.3 %** | | **3.2 %** | 4.4 % | 2/39 |
+| cascade t = −0.05 + snap | 9.1 % | | 2.9 % | 4.8 % | 12/39 |
+
+Soup log-probs: median −0.027 (experts −0.08 to −0.24), so the soup is the confident one, as predicted. Arm 1: no t
+beats the soup by ≥ 0.5 PER points (best −0.4 at t ≤ −0.15): **prediction held**; escalation stays as the demo's
+routing path at t = −0.20, firing on ~5 % of clips. Arm 2: snap −0.4 PER points on the soup (just under the
+predicted −0.5 to −1.5) but WER 13.2 → 9.1 %; vowels untouched (snap fixes spelling of consonant clusters). With
+snap, t = −0.05 reaches 2.9 % PER at six times the escalation; one-clip noise at 657 phones, and WER is worse.
+Shipped: soup q8_0 first, t = −0.20, snap on the final (`SONIC_SNAP`).
+
+## 2026-10-09 — S5: kit run 3, soup-first + snap (written before the run)
+`local_decode.py` on the 39 clips, M3, 4 threads: partials from the soup q8_0 (auto window, shedding), final =
+cascade at the full window, t = −0.20, snap. Reading: accuracy should reproduce S4's offline row within a clip's
+noise (it is the same decode, now in the streaming harness); latency is the point. Prediction: WER ≈ 8–9 %, PER ≈
+3.2 %; rules 1 and 2 pass; TTLT median ≈ the soup's full-window cost on the M3 (≈ 3 s; the speculative final helps
+only on clips with ≥ 0.3 s of trailing silence after trim); TTFT-stable median ≈ 3 s (partials as costly as kit2's).
+If TTLT > 4 s median, the next lever is the final window, not the router.
+
+### S5 scored, accuracy only (`results/sonic/kit3/`, M3): latency void, machine contended
+WER **9.1 %**, CER 2.4 %, PER **3.5 %**, vowel 4.8 %; rules 1 and 2 pass. Accuracy prediction held (S4 offline:
+8.3 % / 3.2 %, one clip apart). Latency read TTFT-stable 13.6 s, TTLT 11.5 s median, but the Mac's load average was
+7.8–9.7 during the run (other processes): the same DoRA q5_0 full-window decode took 7 s instead of S1's 3.3 s, soup
+q8_0 9 s. TTFT > TTLT means no partial was emitted before the final: under that load every partial was shed. Not
+read. Rerun on ahms pinned to 4 cores (`taskset`), idle box (S5a).

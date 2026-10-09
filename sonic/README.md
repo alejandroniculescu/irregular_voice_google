@@ -17,7 +17,7 @@ The story the build shows: **streaming** (partials every 0.5 s, a word shown onc
 experts** (several personal adapters, merged into whisper.cpp models) and **routing** (the first expert answers
 when confident, otherwise every expert decodes and the most confident wins).
 
-    uv venv .venv-sonic --python 3.12 && uv pip install --python .venv-sonic/bin/python pywhispercpp numpy jiwer gruut pytest
+    uv venv .venv-sonic --python 3.12 && uv pip install --python .venv-sonic/bin/python pywhispercpp numpy jiwer gruut gruut_lang_de wordfreq pytest
     PYTHONPATH=src:. .venv-sonic/bin/python -m sonic.bench --ctx 0 512
     .venv-sonic/bin/python sonic/track2/make_manifest.py
     .venv-sonic/bin/python data/ext/SAPC-template/track2_starting_kit/local_decode.py --submission-dir sonic/track2 \

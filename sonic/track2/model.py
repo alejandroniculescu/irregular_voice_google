@@ -13,7 +13,8 @@ log-prob is below ``SONIC_ESCALATE`` the other experts decode too and the most c
 
 Configuration by environment, so the same file runs locally and in the submission:
 ``SONIC_MODELS`` (dir of the ggml experts), ``SONIC_EXPERTS`` (comma list of file stems, first one streams),
-``SONIC_THREADS``, ``SONIC_LANG``, ``SONIC_PARTIAL_EVERY`` (seconds), ``SONIC_PARTIAL_CTX`` and ``SONIC_FINAL_CTX``
+``SONIC_THREADS``, ``SONIC_LANG``, ``SONIC_SNAP`` (a manifest: its train transcripts, the commands and lexicons feed
+``snap`` on the final, non-words to the closest same-sounding real word; empty = off; S4: WER 13.2 -> 9.1 %), ``SONIC_PARTIAL_EVERY`` (seconds), ``SONIC_PARTIAL_CTX`` and ``SONIC_FINAL_CTX``
 (encoder window: ``auto`` sizes it to the audio with a floor of 512, ``0`` is the full 30 s, or a number of
 positions; the final uses the full window: the soup loses 1.3 points at 1024, S3), ``SONIC_ESCALATE`` (log-prob threshold).
 """
@@ -40,7 +41,8 @@ LANG = os.environ.get("SONIC_LANG", "de")
 PARTIAL_EVERY = float(os.environ.get("SONIC_PARTIAL_EVERY", "0.5"))
 PARTIAL_CTX = os.environ.get("SONIC_PARTIAL_CTX", "auto")
 FINAL_CTX = os.environ.get("SONIC_FINAL_CTX", "0")
-ESCALATE = float(os.environ.get("SONIC_ESCALATE", "-0.20"))
+ESCALATE = float(os.environ.get("SONIC_ESCALATE", "-0.20"))     # S4: escalates ~5 % of clips; the soup holds the gain
+SNAP = os.environ.get("SONIC_SNAP", str(HERE.parent.parent / "data" / "processed" / "trim" / "manifest.csv"))
 SLACK = 0.2               # seconds the decoder may lag the audio before partial decodes are shed
 FRAME = 160               # 10 ms loudness frames, at absolute offsets, for the trim
 TRIM_RMS = 0.01           # a frame above this (about -40 dBFS) is speech for the trim
@@ -81,6 +83,10 @@ def common_prefix(a: list[str], b: list[str]) -> list[str]:
 class Model:
     def __init__(self):
         self.experts = [Expert(str(MODELS / f"{stem}.bin"), stem, threads=THREADS, language=LANG) for stem in EXPERTS]
+        self.snap = None
+        if SNAP and Path(SNAP).exists():
+            from irregular_voice_google import snap
+            self.snap = snap.for_speaker(SNAP)
         self._partial_callback = lambda _text: None
         self.reset()
 
@@ -138,7 +144,8 @@ class Model:
         def decode(k: int) -> tuple[str, float]:
             d = self.experts[k].decode(audio, ctx_of(FINAL_CTX))
             return d.text, d.logprob
-        return cascade(decode, len(self.experts), ESCALATE)
+        text, ran = cascade(decode, len(self.experts), ESCALATE)
+        return (self.snap.text(text) if self.snap else text), ran
 
     def input_finished(self) -> str:
         if not self.chunks:

@@ -16,15 +16,25 @@ from pathlib import Path
 
 import numpy as np
 
-from irregular_voice_google.home import ACTIONS, phrase
+from irregular_voice_google.home import ACTIONS, IN
 from irregular_voice_google.per import VOWELS, gruut_g2p, phone_class
 
 ROOT = Path(__file__).resolve().parent.parent
 
 
-def home_commands() -> list[str]:
+ORDERS = ("device room action", "room device action", "device action room", "action device room")
+
+
+def home_commands(order: str = ORDERS[0]) -> list[str]:
+    """Every device x room x action, slots spoken in ``order`` (today's phrasing: "Licht im Flur an")."""
     rooms = json.loads((ROOT / "resources/home_de.json").read_text(encoding="utf-8"))["room"]["values"]
-    return [phrase({"device": d, "room": r, "action": a}) for d, acts in ACTIONS.items() for r in rooms for a in acts]
+    out = []
+    for d, acts in ACTIONS.items():
+        for r in rooms:
+            for a in acts:
+                slots = {"device": d, "room": IN.get(r, f"im {r}"), "action": a}
+                out.append(" ".join(slots[k] for k in order.split()))
+    return out
 
 
 def short_commands() -> list[str]:
@@ -69,7 +79,8 @@ def main() -> None:
     rate = speaking_rate(ROOT / "data/processed/trim/manifest.csv", g2p)
     print(f"his speaking rate: {rate:.1f} phones/s ({1000 / rate:.0f} ms per phone)")
     res = {"rate_phones_per_s": rate}
-    for name, cmds in (("home", home_commands()), ("short", short_commands())):
+    sets = [(f"home: {o}", home_commands(o)) for o in ORDERS] + [("short", short_commands())]
+    for name, cmds in sets:
         seqs = [g2p(c) for c in cmds]
         for variant, ss in (("exact", seqs), ("vowel-wildcard", [vowels_as_wildcards(s) for s in seqs])):
             up = uniqueness_points(ss)
@@ -80,7 +91,7 @@ def main() -> None:
                                         "p75_ms": float(np.percentile(ms, 75)), "share_ge_500ms": float(np.mean(ms >= 500)),
                                         "indistinguishable": int(never), "mean_len": float(np.mean([len(s) for s in ss]))}
             r = res[f"{name}/{variant}"]
-            print(f"{name:<5} {variant:<15} n={r['n']:3d}  saving median {r['median_ms']:4.0f} ms  [p25 {r['p25_ms']:4.0f}, p75 {r['p75_ms']:4.0f}]"
+            print(f"{name:<24} {variant:<15} n={r['n']:3d}  saving median {r['median_ms']:4.0f} ms  [p25 {r['p25_ms']:4.0f}, p75 {r['p75_ms']:4.0f}]"
                   f"  ≥500 ms on {r['share_ge_500ms']:.0%}  indistinguishable {r['indistinguishable']}  (mean {r['mean_len']:.1f} phones)")
     out = ROOT / "results/sonic/cohort.json"; out.write_text(json.dumps(res, indent=2), encoding="utf-8")
     print(f"wrote {out}")
