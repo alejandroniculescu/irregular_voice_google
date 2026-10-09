@@ -25,6 +25,7 @@ ivg-train = "irregular_voice_google.train:main"
 ivg-preprocess = "irregular_voice_google.preprocess:main"
 ivg-ggml = "irregular_voice_google.ggml:main"
 ivg-synth = "irregular_voice_google.synth:main"
+ivg-synth-neutts = "irregular_voice_google.synth_neutts:main"
 ivg-demo = "irregular_voice_google.demo:main"
 
 [dependency-groups]
