@@ -144,3 +144,34 @@ as WER. PER has five times the resolution of WER here (657 phones vs 121 words),
 arm C; the reading rule is unchanged (interval of the paired difference excludes zero). Note the correction step
 lowers WER but not PER for the DoRA system (6.1 → 5.8): it fixes spellings, which is what a word-level metric
 rewards and a phone-level one barely sees.
+
+## 2026-10-09 — E3: the best local model for each expert slot (written before any number)
+
+The product is a router over experts, not a mixture of experts: acoustic (Whisper + adapter), lexical (snap:
+Kölner Phonetik + spelling distance), command (`home.py` with the guard), dialogue (booking questions with
+grammars), open-text fallback (`llmfix`: a local Ollama model whose word swaps pass a sound gate). Routing is
+deterministic and stays so; only the fallback slot has a model to choose. Nothing leaves the device: candidates
+are local models only. On ahms today (Ollama): `qwen3.5:4b`, `qwen3.5:9b`, `gemma4:26b` (plus two hackathon
+fine-tunes that are not ours and are excluded).
+
+**E3a, the fallback as a sound-gated fixer, measurable now.** `ivg-eval --snap --llm <model>` on the 39 test clips
+with the DoRA adapter: PER (primary), WER, CER after snap alone vs after snap + each model's gated fix. Reading per
+model: helps / hurts / no evidence by the paired PER bootstrap against snap alone; a model that *hurts* PER is out
+regardless of WER (it is inventing sound-alikes). Prediction: all three "no evidence" on PER (the gate allows one
+sound-alike swap per word, so the ceiling is the handful of real-word confusions in 121 words); gemma4:26b the
+slowest by far and no better. Also recorded: seconds per utterance per model, since the fallback runs on a phone
+later and 26 B does not.
+
+**E3b, the fallback as an intent reader, needs a labelled set first.** Utterances the command and dialogue experts
+did not claim: the model may only produce a clarifying question or a confirmed intent from a closed list, never an
+action. Metric: on a set of unclaimed utterances with hand-labelled intended meaning (to be built from the next
+recordings and the 15-command replay's near misses), rate of correct intent, rate of wrong action (must be 0),
+asking rate. Not runnable until that set exists.
+
+**Per-expert error attribution, from the same CSVs.** For every test utterance: phones wrong after the acoustic
+expert (raw PER), after the lexical expert (snap), after the fallback (llm): "where was each error born and which
+expert removed it". One table per system; the slide that says which part fails. Added to `ivg-per` as
+`--stages raw snap llm`.
+
+Order: arm C finishes (GPU) → E3a (Ollama on the same GPU, so not concurrent) → attribution table. All on ahms,
+none needs Ale.
