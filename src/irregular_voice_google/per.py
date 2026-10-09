@@ -92,6 +92,64 @@ def attribution(stages: dict[str, np.ndarray]) -> dict:
     return out
 
 
+# phone classes for the error profile (gruut de-de IPA); unknown symbols fall into "other"
+MANNER = {**dict.fromkeys("pbtdkgʔ", "plosive"), **dict.fromkeys(["pf", "ts", "tʃ", "dʒ"], "affricate"),
+          **dict.fromkeys("fvszʃʒçxχhʁ", "fricative"), **dict.fromkeys("mnŋ", "nasal"), **dict.fromkeys("lrjw", "liquid/glide")}
+PLACE = {**dict.fromkeys("pbmfvw", "labial"), **dict.fromkeys(["pf"], "labial"), **dict.fromkeys("tdnszlr", "alveolar"),
+         **dict.fromkeys(["ts", "tʃ", "dʒ"], "alveolar"), **dict.fromkeys("ʃʒçj", "palatal"), **dict.fromkeys("kgŋxχʁ", "dorsal"),
+         **dict.fromkeys("hʔ", "glottal")}
+VOWELS = set("aeiouyæøœɐɑɔəɛɪʊʏɶ")
+
+
+def phone_class(p: str) -> tuple[str, str, str]:
+    """(manner, place, length) of one gruut phone; vowels get manner 'vowel' and place 'vowel'."""
+    base = p.replace("ː", "").replace("̯", "").replace("̃", "")
+    long = "long" if "ː" in p else "short"
+    if not base:
+        return ("other", "other", long)
+    if base[0] in VOWELS or all(c in VOWELS for c in base):
+        return ("vowel", "vowel", long)
+    return (MANNER.get(base, "other"), PLACE.get(base, "other"), long)
+
+
+def profile(rows: list[dict], g2p) -> dict:
+    """Error profile by phone class: substitutions and deletions counted on the reference phone, insertions on the
+    hypothesis phone; each class also reports its reference count, so rates are per class."""
+    import jiwer as jw
+    sub, dele, ins, ref_n = {}, {}, {}, {}
+    def bump(d, key):
+        d[key] = d.get(key, 0) + 1
+    for r in rows:
+        ref, hyp = g2p(r["reference"]), g2p(r["hypothesis"])
+        for ph in ref:
+            bump(ref_n, phone_class(ph)[0])
+        if not ref:
+            continue
+        out = jw.process_words(" ".join(ref), " ".join(hyp))
+        for chunk in out.alignments[0]:
+            if chunk.type == "substitute":
+                for i in range(chunk.ref_start_idx, chunk.ref_end_idx):
+                    bump(sub, phone_class(ref[i])[0])
+            elif chunk.type == "delete":
+                for i in range(chunk.ref_start_idx, chunk.ref_end_idx):
+                    bump(dele, phone_class(ref[i])[0])
+            elif chunk.type == "insert":
+                for j in range(chunk.hyp_start_idx, chunk.hyp_end_idx):
+                    bump(ins, phone_class(hyp[j])[0])
+    classes = sorted(set(ref_n) | set(sub) | set(dele) | set(ins))
+    return {c: {"ref": ref_n.get(c, 0), "sub": sub.get(c, 0), "del": dele.get(c, 0), "ins": ins.get(c, 0),
+                "rate": ((sub.get(c, 0) + dele.get(c, 0)) / ref_n[c]) if ref_n.get(c) else None} for c in classes}
+
+
+def oracle(stages: dict[str, np.ndarray]) -> dict:
+    """If a router picked the best system per utterance: the PER bound, and how often each system is the pick."""
+    names = list(stages); E = np.stack([stages[n][:, 1] for n in names]); R = stages[names[0]][:, 0]
+    best = E.min(axis=0); pick = E.argmin(axis=0)
+    return {"oracle_per": float(best.sum() / R.sum()), "best_single_per": min(float(stages[n][:, 1].sum() / R.sum()) for n in names),
+            "picked": {n: int((pick == i).sum()) for i, n in enumerate(names)},
+            "pairwise_overlap": {f"{a} ∩ {b}": int(np.minimum(stages[a][:, 1], stages[b][:, 1]).sum()) for i, a in enumerate(names) for b in names[i + 1:]}}
+
+
 def load_rows(csv_path: Path) -> list[dict]:
     with csv_path.open(encoding="utf-8") as f:
         return list(csv.DictReader(f))
@@ -104,6 +162,8 @@ def main(argv=None) -> None:
     parser.add_argument("--draws", type=int, default=10000)
     parser.add_argument("--out", help="JSON output (default: <results_dir>/per.json)")
     parser.add_argument("--stages", help="a system stem, e.g. models__lora-dora-r32: attribute errors over raw -> +snap -> +snap+llm")
+    parser.add_argument("--profile", action="append", default=[], help="CSV stem: error profile by phone class (repeatable)")
+    parser.add_argument("--oracle", nargs="+", help="CSV stems: per-utterance oracle combination and pairwise error overlap")
     args = parser.parse_args(argv)
     d = Path(args.results_dir)
     g2p = gruut_g2p()
@@ -127,6 +187,17 @@ def main(argv=None) -> None:
         for k, r in res["attribution"].items():
             extra = f"  fixed {r['fixed']:3d}  broken {r['broken']:3d}  (utterances {r['utterances_improved']}↑ {r['utterances_worsened']}↓)" if "fixed" in r else ""
             print(f"stage {k:<5} PER {r['per']:6.1%}  errors {r['errors']:3d}{extra}")
+    for stem in args.profile:
+        pr = profile(load_rows(d / f"{stem}.csv"), g2p); res.setdefault("profile", {})[stem] = pr
+        print(f"profile {stem}")
+        for c, v in pr.items():
+            rate = "   —" if v["rate"] is None else f"{v['rate']:5.1%}"
+            print(f"  {c:<13} ref {v['ref']:4d}  sub {v['sub']:3d}  del {v['del']:3d}  ins {v['ins']:3d}  sub+del rate {rate}")
+    if args.oracle:
+        o = oracle({stem: per_rows(load_rows(d / f"{stem}.csv"), g2p) for stem in args.oracle}); res["oracle"] = o
+        print(f"oracle PER {o['oracle_per']:.1%} vs best single {o['best_single_per']:.1%}; picked {o['picked']}")
+        for k, v in o["pairwise_overlap"].items():
+            print(f"  shared errors {k}: {v}")
     out = Path(args.out) if args.out else d / "per.json"
     out.write_text(json.dumps(res, indent=2, ensure_ascii=False), encoding="utf-8")
     print(f"wrote {out}")

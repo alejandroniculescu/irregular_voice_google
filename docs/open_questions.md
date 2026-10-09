@@ -182,3 +182,17 @@ raw 82 (12.5 %); after snap 72 (11.0 %). Reading: the lexical expert earns its p
 and is nearly net-zero on the best one; what it breaks is a real word swapped for a sound-alike that was not
 said. That is the E3a question in miniature, and the sound gate on the LLM fallback has the same risk, measured
 the same way.
+
+**Error profile by phone class and the oracle bound (2026-10-09, `ivg-per --profile / --oracle`).**
+DoRA r32 (+snap), sub+del rate per class: vowels **8.3 %** (18 of 229 substituted), fricatives 4.3 %, plosives
+3.4 %, liquids 1.9 %, nasals 0 %. Base model: vowels 23.6 %, liquids 28.8 %, plosives 18.9 %, nasals 17.5 %,
+fricatives 12.9 %. So the adapter learned his consonants almost completely and his vowels least: what remains is a
+vowel-quality problem, 18 substitutions, not deletions. (Caveat: classes from gruut's IPA, no stress or
+syllable position; "other" is 5 phones.)
+Oracle over the four adapters, best system per utterance: **PER 1.7 % against 5.8 % for the best single**; the
+DoRA system is the pick on 31 of 39 utterances, r16 on 6, synth on 2. Pairwise shared errors: DoRA ∩ r16 only 16
+of DoRA's 38, i.e. the two recipes miss *different* sounds. That is the Venn diagram: a router that could tell
+which adapter to trust per utterance would take two thirds of the remaining errors away; nothing in the pipeline
+can do that today (the cue would have to come from the audio or from agreement between the two decodes), and
+that is the E2 structure again, from the error side. Added to E2's reading: the oracle bound is the number any
+mixture must be compared against.

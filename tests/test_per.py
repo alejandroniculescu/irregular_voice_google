@@ -43,3 +43,14 @@ def test_attribution_counts_fixed_and_broken():
     assert a["raw"]["errors"] == 5 and "fixed" not in a["raw"]
     assert a["snap"] == {"per": pytest.approx(4 / 30), "errors": 4, "fixed": 2, "broken": 1,
                          "utterances_improved": 1, "utterances_worsened": 1}
+
+
+def test_phone_class_and_profile_and_oracle():
+    assert pm.phone_class("pf") == ("affricate", "labial", "short") and pm.phone_class("aː") == ("vowel", "vowel", "long")
+    assert pm.phone_class("ç") == ("fricative", "palatal", "short") and pm.phone_class("ŋ") == ("nasal", "dorsal", "short")
+    rows = [{"reference": "Sieben Uhr", "hypothesis": "Seben Uhr"}, {"reference": "Neun", "hypothesis": ""}]
+    pr = pm.profile(rows, fake_g2p)
+    assert pr["vowel"]["sub"] == 1 and pr["nasal"]["del"] == 2 and pr["vowel"]["del"] >= 1
+    A = np.array([[10, 3], [10, 0]], float); B = np.array([[10, 0], [10, 4]], float)
+    o = pm.oracle({"a": A, "b": B})
+    assert o["oracle_per"] == 0.0 and o["best_single_per"] == pytest.approx(0.15) and o["pairwise_overlap"]["a ∩ b"] == 0
