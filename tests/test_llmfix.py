@@ -29,3 +29,10 @@ def test_fix_uses_the_proposer(snapper):
     assert fix("Schweich schmeckt seidig.", snapper, "m", lambda t, m: "Schweiß schmeckt salzig") == \
         "Schweiß schmeckt salzig."
     assert fix("...", snapper, "m", lambda t, m: "Hallo") == "..."
+
+
+def test_request_body_disables_thinking_by_default():
+    from irregular_voice_google.llmfix import request_body
+    b = request_body("Der Hund belt laut.", "qwen3.5:4b")
+    assert b["think"] is False and b["stream"] is False and b["options"]["temperature"] == 0
+    assert "think" not in request_body("x", "m", think=None)

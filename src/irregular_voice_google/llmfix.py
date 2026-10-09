@@ -21,6 +21,7 @@ from __future__ import annotations
 import difflib
 import json
 import re
+import urllib.error
 import urllib.request
 
 from irregular_voice_google import phonetic
@@ -54,12 +55,30 @@ def sounds_close(heard: str, proposed: str) -> bool:
     return bool(a and b) and code_distance(a, b) <= (2 if max(len(a), len(b)) >= 4 else 1)
 
 
+def request_body(text: str, model: str, think: bool | None = False) -> dict:
+    """The Ollama request. ``think=False`` matters: "thinking" models (qwen3.5, gemma4 under Ollama) otherwise
+    spend the whole ``num_predict`` budget on hidden reasoning and return an empty response, so the fixer was
+    silently inert (E3a, 2026-10-09: 0 proposals from three models; with think off, 4–6 of 12). ``None`` omits
+    the key, for servers or models that reject it."""
+    body = {"model": model, "prompt": PROMPT.format(text=text), "stream": False,
+            "options": {"temperature": 0, "num_predict": 80}}
+    if think is not None:
+        body["think"] = think
+    return body
+
+
 def ollama(text: str, model: str, url: str = OLLAMA, timeout: float = 120) -> str:
-    body = json.dumps({"model": model, "prompt": PROMPT.format(text=text), "stream": False,
-                       "options": {"temperature": 0, "num_predict": 80}}).encode()
-    req = urllib.request.Request(url, body, {"Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        out = json.loads(r.read())["response"].strip()
+    def post(think):
+        req = urllib.request.Request(url, json.dumps(request_body(text, model, think)).encode(),
+                                     {"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return json.loads(r.read()).get("response", "").strip()
+    try:
+        out = post(False)
+    except urllib.error.HTTPError as e:          # a model or server that does not accept "think"
+        if e.code != 400:
+            raise
+        out = post(None)
     return out.splitlines()[0].strip().strip('"„“') if out else ""
 
 
