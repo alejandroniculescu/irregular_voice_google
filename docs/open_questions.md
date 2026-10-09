@@ -61,3 +61,26 @@ one per condition the satellite will meet (morning, tired, across the room, with
 that picks or blends them per utterance from the audio itself. Needs the new recordings from the 2026-10-06
 list first; the structure to train once they exist. Reading as E1: each condition's adapter against the single
 adapter on that condition's held-out clips.
+
+### E1, arms A and B scored 2026-10-09 (`results/20261009-132109/`, git-ignored; HF path, no prompt, GPU)
+
+Same 39 clips, **121 reference words in total**, so one word is 0.8 WER points: this test set cannot resolve
+anything under about 5 points, whatever the arm. Utterance bootstrap, 10,000 draws, on the per-clip CSVs.
+
+| system (all `--augment 0.5`) | WER raw | WER +snap | CER +snap |
+|---|---|---|---|
+| base model | 48.8 % | 47.9 % | 20.3 % |
+| A `lora-aug` (LoRA r32, patient audio) | 30.6 % | 25.6 % | 7.5 % |
+| B `lora-aug-synth` (A + 300 generic-voice sentences) | 24.8 % | 19.8 % | 8.2 % |
+| `lora-r16` | 21.5 % | 17.4 % | 5.3 % |
+| `lora-dora-r32` (the README's system) | 15.7 % | 13.2 % | 4.1 % |
+
+- **B vs A:** −5.8 points (+snap), 95 % interval [−14.9, +3.1], P(B ≥ A) = 0.12 → **no evidence either way**, as
+  predicted. CER went up slightly (7.5 → 8.2): the generic voices taught words, not his sounds.
+- **DoRA vs A:** −12.4 [−21.7, −3.8]: the recipe matters more than any synthetic data so far. The README's
+  13.2 / 10.7 figures come from the whisper.cpp + prompt path (`ivg-demo --compare`), not this HF path, so the
+  two tables are not the same pipeline; within this one, the DoRA adapter is the baseline arm C must beat.
+- **Consequence for arm C:** to be readable at all, C has to move WER by more than ~10 points on 121 words, or
+  the test set has to grow. The honest order is: train C on the DoRA recipe (`--dora`, the README's system),
+  score it; if the interval straddles zero, the answer is "this test set cannot tell", not "the clone did
+  nothing", and the next recordings should add held-out sentences before any further augmentation claims.
