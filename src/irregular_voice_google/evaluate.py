@@ -154,7 +154,7 @@ def main() -> None:
     parser.add_argument("--snap", action="store_true",
                         help="also score each model with non-words snapped to real words (snap.py)")
     parser.add_argument("--llm", help="with --snap: also score snap + a local Ollama model's sound-gated "
-                        "word fixes (llmfix.py), e.g. qwen2.5:3b")
+                        "word fixes (llmfix.py); the chosen model is qwen3.5:9b")
     args = parser.parse_args()
     if args.llm and not args.snap:
         parser.error("--llm needs --snap")

@@ -302,9 +302,16 @@ only if it is a real word, sounds close (Kölner Phonetik code at most 1–2
 edits away) and replaces exactly one heard word:
 
 ```bash
-ollama serve & ollama pull qwen2.5:3b
-uv run ivg-eval --model models/ggml/<adapter>-q5_0.bin --split dev --snap --llm qwen2.5:3b ...
+ollama serve & ollama pull qwen3.5:9b
+uv run ivg-eval --model models/ggml/<adapter>-q5_0.bin --split dev --snap --llm qwen3.5:9b ...
 ```
+
+**Chosen model: `qwen3.5:9b`** (2026-10-09). On the test split with the DoRA adapter it was the least harmful of
+three local models: PER 5.8 % (snap) → 6.1 %, +0.3 points [−1.0, +1.7], 4 phones fixed and 6 broken; qwen3.5:4b
+(+1.7) and gemma4:26b (+1.5, significant; 0 fixed, 10 broken) were worse. The call sends `"think": false`;
+without it these "thinking" models return empty answers and the fixer silently does nothing. The fixer stays
+**opt-in** (`--llm`): no model tested so far improves transcripts, so it is not in the default chain; its
+intended role is proposing a clarifying question, not rewriting what was said.
 
 With `qwen2.5:3b` on dev, WER went from 10.9% (snap) to 15.3%, and CER from
 3.4% to 5.9%. It made one right fix (sackt → sägt) and broke eight correct
@@ -312,7 +319,7 @@ words (Zaun → Zun, warm → wär, Thymian → Thunfisch, Jara → Joghurt, …
 Tightening the sound check would not have stopped most of these: the model
 has too little sense of German for sentences that are odd on purpose. It needs
 a stronger model, and a gate that scores candidates instead of trusting a
-rewrite.
+rewrite. (2026-10-09: stronger models did not help either; see below the code block.)
 
 ## whisper.cpp
 
