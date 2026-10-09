@@ -236,3 +236,37 @@ language model is more confident in sound-alike real words the speaker did not s
 was too kind. **Decision for the product: the LLM is not a fixer.** If it stays, it stays in the one role where
 being wrong is safe: proposing a clarifying question, never rewriting a transcript (E3b, needs a labelled set).
 The acoustic side is where the gain is (oracle 5.8 → 1.7 % over adapters).
+
+## 2026-10-09 — R1: a reference-free router over the existing adapters (written before any number)
+
+The oracle says 5.8 → 1.7 % if something picks the right adapter per utterance. Not all of E2 needs new recordings:
+a router over the **four adapters we already have** can use cues that exist at inference time. Three routers with
+no trained parameters (39 clips cannot fit any), scored from the `+snap` CSVs in `results/20261009-132109/`:
+**medoid** (the hypothesis with the smallest total phone edit distance to the others), **ROVER** (word-level vote
+after aligning every hypothesis to DoRA's, ties to DoRA), **switch** (DoRA unless two other systems agree with each
+other, word for word, against it). Code in `sonic/route.py`. A fourth, **confidence** (pick the decode with the
+highest mean token log-prob), needs a rerun on ahms that logs log-probs; next.
+Reading: each router against DoRA r32 +snap by the paired PER bootstrap (WER, CER and the vowel error rate reported alongside; vowels are where DoRA is weakest, 8.3 %); and the share of the oracle gap
+(5.8 → 1.7) it closes. Prediction: medoid and ROVER *hurt* or no evidence (three of the four systems are much
+weaker than DoRA, 6.4–11.0 %, so consensus pulls toward their shared errors); switch no evidence, closing under a
+fifth of the gap. If so, agreement is not the cue and confidence is the one to test.
+Cost note for Track 2: N adapters = N decodes on CPU; a router only earns its place if it pays for that.
+
+### R1 scored 2026-10-09 (`results/20261009-132109/route*.json`): medoid helps, the prediction was wrong
+Pivot DoRA r32 +snap: WER 13.2 %, CER 4.1 %, PER 5.8 %, vowel error 8.3 %. Routers over pivot + r16 + aug-synth + aug:
+
+| router | WER | CER | PER | vowel | PER diff [95 %] | P(diff ≥ 0) | oracle gap closed | clips changed |
+|---|---|---|---|---|---|---|---|---|
+| medoid | 9.1 % | 2.6 % | **3.3 %** | 5.2 % | −2.4 [−5.6, 0.0] | 0.034 | 59 % | 9 |
+| rover | 10.7 % | 3.0 % | 4.3 % | 6.1 % | −1.5 [−4.7, +1.0] | 0.146 | 37 % | 7 |
+| switch | 11.6 % | 3.2 % | 4.6 % | 6.6 % | −1.2 [−4.1, +0.9] | 0.184 | 30 % | 7 |
+
+Medoid is stable to the system set: PER 3.3 % with 3 systems (pivot + r16 + aug-synth), 4, or 5 (+ neutts, where
+ROVER also reaches 3.3 %). Reading: medoid **helps** on PER by the rule (P = 0.03, interval touching 0, 39 clips,
+so a weak "helps"), and it moves WER, CER and the vowel rate the same way; ROVER and switch no evidence. The
+prediction (consensus of weaker systems pulls toward shared errors) was wrong: the weaker adapters err in
+*different* places, so the one closest to all others is usually the right one. The vowel rate falls most
+(8.3 → 5.2 %), i.e. the router fixes the class the single adapter is worst at.
+Caveats: same 39 clips the oracle was read on, no held-out set; medoid has no fitted parameters, so this is not
+overfitting a router, but the system set was chosen knowing these clips. Cost for Track 2: 3 decodes per
+utterance on CPU; the 3-system medoid is the cheapest that keeps the full gain.
