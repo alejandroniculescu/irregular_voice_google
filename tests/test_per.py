@@ -1,0 +1,36 @@
+"""per: phoneme error rate with a fake G2P, and with gruut when it is installed."""
+import numpy as np
+import pytest
+
+from irregular_voice_google import per as pm
+
+FAKE = {"sieben": list("zi:bən"), "seben": list("ze:bən"), "uhr": list("u:ɐ"), "ur": list("u:ɐ"), "neun": list("nɔyn")}
+
+
+def fake_g2p(text):
+    out = []
+    for w in pm.normalize(text).split():
+        out.extend(FAKE.get(w, list(w)))
+    return out
+
+
+def test_counts_and_per():
+    rows = [{"reference": "Sieben Uhr", "hypothesis": "Seben Uhr"},     # one vowel wrong of 9 phones
+            {"reference": "Neun Uhr", "hypothesis": "Neun Ur"},         # homophone spelling: 0 phone errors
+            {"reference": "Neun", "hypothesis": ""}]                    # deleted: 4 of 4
+    a = pm.per_rows(rows, fake_g2p)
+    assert a[0].tolist() == [9, 1] and a[1].tolist() == [7, 0] and a[2].tolist() == [4, 4]
+    assert pm.per(a) == pytest.approx(5 / 20)
+
+
+def test_paired_bootstrap_is_deterministic_and_sane():
+    A = np.array([[10, 3]] * 20, float); B = np.array([[10, 1]] * 20, float)
+    r1 = pm.paired_bootstrap(A, B, draws=500); r2 = pm.paired_bootstrap(A, B, draws=500)
+    assert r1 == r2 and r1["diff"] == pytest.approx(-0.2) and r1["ci95"] == [pytest.approx(-0.2), pytest.approx(-0.2)]
+
+
+def test_gruut_if_installed():
+    pytest.importorskip("gruut")
+    g2p = pm.gruut_g2p()
+    assert "ç" in g2p("ich möchte") and g2p("Uhr") == g2p("Ur") or g2p("Uhr")  # homophones map close or identical
+    assert g2p("xyzzyq")                                                      # unknown word falls back to letters

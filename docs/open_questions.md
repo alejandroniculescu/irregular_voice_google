@@ -136,3 +136,11 @@ etiology-balanced dysarthric set there is, and the next edition will use it too)
   (d) and any training wait.
 
 **Action for Ale:** send the DUA request and one-page proposal now (draft in `docs/sapc2_proposal_draft.md`).
+
+**PER added 2026-10-09** (`ivg-per`, German IPA via gruut, 657 reference phones on the 39 clips; `results/.../per.json`):
+base 23.6 % (+snap 24.2); A `lora-aug` 12.5 / 11.0; B `lora-aug-synth` 10.2 / 9.9; `lora-r16` 6.8 / 6.4;
+`lora-dora-r32` 6.1 / **5.8**. B vs A on PER (+snap): −1.1 points [−5.3, +3.5], P(B ≥ A) = 0.33 → no evidence, same
+as WER. PER has five times the resolution of WER here (657 phones vs 121 words), so it is the primary metric for
+arm C; the reading rule is unchanged (interval of the paired difference excludes zero). Note the correction step
+lowers WER but not PER for the DoRA system (6.1 → 5.8): it fixes spellings, which is what a word-level metric
+rewards and a phone-level one barely sees.

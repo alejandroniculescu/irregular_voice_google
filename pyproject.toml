@@ -16,6 +16,9 @@ dependencies = [
   "wordfreq>=3.1.1",
 ]
 
+[project.optional-dependencies]
+per = ["gruut>=2.4", "gruut-lang-de>=2.0"]
+
 [project.scripts]
 ivg-manifest = "irregular_voice_google.manifest:main"
 ivg-eval = "irregular_voice_google.evaluate:main"
@@ -26,6 +29,7 @@ ivg-preprocess = "irregular_voice_google.preprocess:main"
 ivg-ggml = "irregular_voice_google.ggml:main"
 ivg-synth = "irregular_voice_google.synth:main"
 ivg-synth-neutts = "irregular_voice_google.synth_neutts:main"
+ivg-per = "irregular_voice_google.per:main"
 ivg-demo = "irregular_voice_google.demo:main"
 
 [dependency-groups]
