@@ -84,3 +84,55 @@ anything under about 5 points, whatever the arm. Utterance bootstrap, 10,000 dra
   the test set has to grow. The honest order is: train C on the DoRA recipe (`--dora`, the README's system),
   score it; if the interval straddles zero, the answer is "this test set cannot tell", not "the clone did
   nothing", and the next recordings should add held-out sentences before any further augmentation claims.
+
+## 2026-10-09 — a target to aim at: SAPC2 Track 2 (streaming dysarthric ASR), NeurIPS 2026 workshop
+
+https://xiuwenz2.github.io/SAPC2-website/ and the kit https://github.com/xiuwenz2/SAPC-template
+
+**What it is.** Speech Accessibility Project Challenge 2 (Illinois, Google, Amazon, Apple, Microsoft). Track 1:
+unconstrained ASR ranked by accuracy. Track 2: streaming ASR on a Pareto chart of accuracy vs latency,
+**evaluated on CPU only**, 100 ms chunks (1600 samples at 16 kHz, float32 mono), two passes (Pass 1 batch for
+accuracy, Pass 2 real-time with partial callbacks for latency). Primary metric CER, secondary WER, each utterance
+scored against two references (with/without disfluencies, lower kept), clipped at 100 %. Latency = mean of
+TTFT-stable (speech onset → first word final) and TTLT (audio end → final output), P50. Prize US$10k split over
+the Pareto frontier on the sequestered Test2. Baseline in the kit: a streaming Zipformer-transducer (icefall).
+
+**The Track 2 reject policy, which is the part that matches how we already work.** A submission is excluded if
+(1) its stable sentence-prefix match rate on Test1 is under 1/3 (partials that keep changing), (2) on more than
+5 % of utterances the first word is final *before speech begins* ("a word cannot be recognized before it is
+spoken, so this indicates the first word was guessed rather than recognized"), or (3) Pass 1 and Pass 2 give
+different final transcripts after normalisation. Checker: `utils/track2_reject_check.py`. Our guard (never act
+on an uncertain command, ask instead) and the sound-based correction (deterministic) are the same discipline:
+emit nothing you will retract.
+
+**Interface to implement** (`model.py`, class named exactly `Model`): `__init__`, `set_partial_callback(cb)`,
+`reset()`, `accept_chunk(audio_chunk: np.ndarray) -> str` (returns the current partial, calls the callback),
+`input_finished() -> str`. All calls from one decoder thread. Zip: `model.py`, `setup.sh`, `requirements.txt`,
+weights. Runtime image PyTorch 2.5 CPU; 15,000 s per submission. Local run:
+`python3 local_decode.py --submission-dir ... --manifest-csv ... --out-csv ... --out-partial-json ...`.
+
+**Dates.** Competition deadline **24 October 2026**; paper 31 October; workshop 11–12 December, Sydney.
+Data access needs a Data Transfer and Use Agreement plus a one-page proposal to
+speechaccessibility@beckman.illinois.edu, "typically 2–4 weeks". Sent today, data arrives around the deadline:
+**a scored SAPC2 entry this round is unlikely; the DUA is worth sending anyway** (the corpus is the largest
+etiology-balanced dysarthric set there is, and the next edition will use it too).
+
+**What "trying to win" means for us without the data, honestly.**
+- Our architecture is on the wrong side for Track 2 as it stands: Whisper is not a streaming model. whisper.cpp's
+  stream mode re-decodes a sliding window, so partials change, which is exactly rule (1). The kit's baseline
+  (Zipformer-transducer) is streaming-native. Track 1 (unconstrained, accuracy only) fits Whisper + personal
+  adapter; Track 2 fits the product (phone satellite, CPU, deployable). Decide which one we are aiming at before
+  building; the product says Track 2.
+- What transfers regardless: the CPU-only constraint (our GGML route), the two-reference CER scoring (add it to
+  `ivg-eval`), the reject checker as a test on Christian's clips (run `track2_reject_check.py` on our own
+  partials: if whisper.cpp stream fails rule (1) on his audio, we know before any data arrives), and the
+  per-speaker adapter as the thing nobody else in the challenge will have (the challenge is speaker-independent;
+  our angle is a paper on what personalisation adds on top of the best speaker-independent system).
+- Steps that need no SAP data: (a) wrap the current pipeline in the `Model` interface; (b) run the kit's
+  `local_decode.py` and the reject checker on the 39 test clips; (c) measure TTFT-stable and TTLT on CPU; (d) if
+  rule (1) fails, test a stable-prefix policy (emit a word only when it has survived N chunks), which is also what
+  the home assistant needs. Each is a day or less on the Mac.
+- Deadline realism: between 9 and 24 October the Munich week is in the middle. (a)–(c) can run in the background;
+  (d) and any training wait.
+
+**Action for Ale:** send the DUA request and one-page proposal now (draft in `docs/sapc2_proposal_draft.md`).
