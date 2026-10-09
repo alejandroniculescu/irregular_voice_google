@@ -216,3 +216,23 @@ clone of a dysarthric voice sounds like him and articulates like the model; trai
 does not produce. Oracle of the two: 3.5 % vs 5.8 %, 23 shared errors, so C is not useless as a second opinion,
 but it is not a data source. **Voice banking stays a feature (the assistant's reply voice), not training data.**
 Closed; the next augmentation claim waits for more held-out words.
+
+### E3a, scored 2026-10-09 — the local LLM fallback hurts; keep it out of the default chain
+
+First run was inert (thinking models returned empty responses; three models identical to four digits; fixed in
+be7f34a with `think: false`, probe in `scripts/llmfix_probe.py`). **Rule added: identical outputs across arms are a
+bug until shown otherwise.** Rerun on the DoRA r32 adapter, 39 clips, 657 phones (`results/20261009-1609…1610…`):
+
+| fallback model | WER | CER | PER | PER vs snap alone [95 %] | phones fixed / broken |
+|---|---|---|---|---|---|
+| none (snap only) | 13.2 % | 4.1 % | 5.8 % | — | (snap: 8 / 6) |
+| qwen3.5:4b | 15.7 % | 5.1 % | 7.5 % | +1.7 [−0.2, +3.8] | 2 / 13 |
+| qwen3.5:9b | 14.1 % | 4.1 % | 6.1 % | +0.3 [−1.0, +1.7] | 4 / 6 |
+| gemma4:26b | 14.1 % | 5.1 % | 7.3 % | **+1.5 [+0.2, +3.1]** | 0 / 10 |
+
+Reading: none helps; gemma 26b **hurts** (interval excludes zero), qwen 4b nearly; qwen 9b is the least harmful
+and still net negative. The biggest model fixed nothing and broke ten phones: through a sound gate, a stronger
+language model is more confident in sound-alike real words the speaker did not say. Prediction ("no evidence")
+was too kind. **Decision for the product: the LLM is not a fixer.** If it stays, it stays in the one role where
+being wrong is safe: proposing a clarifying question, never rewriting a transcript (E3b, needs a labelled set).
+The acoustic side is where the gain is (oracle 5.8 → 1.7 % over adapters).
