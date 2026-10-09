@@ -17,6 +17,7 @@ from pywhispercpp.model import Model
 
 SAMPLE_RATE = 16000
 FRAMES_PER_SECOND = 50          # encoder positions per second of audio (1500 for 30 s)
+PAD_TO = 30 * SAMPLE_RATE      # whisper's window; see Expert.decode
 TOKENS_PER_SECOND = 8           # cap: German speech is about 3-4 tokens/s, so 8 leaves room without allowing loops
 
 
@@ -54,7 +55,11 @@ class Expert:
         t = time.perf_counter()
         ctx = audio_ctx_for(len(audio)) if ctx is None else ctx
         max_tokens = max(8, math.ceil(len(audio) / SAMPLE_RATE * TOKENS_PER_SECOND))
-        segs = self.model.transcribe(audio.astype(np.float32), audio_ctx=ctx, max_tokens=max_tokens)
+        # zero-pad to 30 s ourselves: on x86, short input made the same decode differ run to run (log-prob jitter,
+        # occasional word flips; Track 2 rule 2 failed on 2/39, S5a), as if past-the-end samples were uninitialized;
+        # padded, it repeats exactly and equals the modal unpadded result
+        audio = np.pad(audio.astype(np.float32), (0, max(0, PAD_TO - len(audio))))
+        segs = self.model.transcribe(audio, audio_ctx=ctx, max_tokens=max_tokens)
         text = " ".join(s.text.strip() for s in segs).strip()
         ctx_ = self.model._ctx
         eot = pw.whisper_token_eot(ctx_)

@@ -484,3 +484,19 @@ WER **9.1 %**, CER 2.4 %, PER **3.5 %**, vowel 4.8 %; rules 1 and 2 pass. Accura
 7.8–9.7 during the run (other processes): the same DoRA q5_0 full-window decode took 7 s instead of S1's 3.3 s, soup
 q8_0 9 s. TTFT > TTLT means no partial was emitted before the final: under that load every partial was shed. Not
 read. Rerun on ahms pinned to 4 cores (`taskset`), idle box (S5a).
+
+### S5a (`ahms:results/sonic/kit3a/`, i9 pinned to 4 P-cores): rule 2 failed; latency void again
+WER 9.1 %, CER 2.4 %, PER 3.5 %, vowel 4.8 % (same as the M3). **Rule 2: 1/39 mismatch** after the kit's
+normalization (2/39 raw, one word each): Pass 1 and Pass 2 finals differed. Another user's 13-core job ran
+alongside (load ≈ 20): TTFT 16.2 s, TTLT 14.6 s median, not read.
+Cause, isolated on test011: the same soup decode of the same samples gave different log-probs run to run
+(−0.0800 … −0.0865 at 1 thread), sometimes a different word; zero-padding the input to 30 s ourselves made it
+repeat exactly (5/5) and equal to the modal unpadded value, as if whisper.cpp read uninitialized memory past short
+input on x86 (never seen on the M3). Fix: `engine.Expert.decode` pads every input to 30 s (window and token cap still
+from the real length). Check: kit run 3b on ahms under the same load must give rule 2 = 39/39.
+Kit run 3b (`ahms:results/sonic/kit3b/`, padded, same load): **rule 2 39/39**; WER 9.9 %, CER 2.8 %, PER 4.3 %,
+vowel 6.1 %. The only finals that changed against 3a are the two unstable clips (test011, test022), so 3a's 3.5 %
+was a draw on them; 3b is the reproducible number. Padding is neutral for the soup itself (39 clips × 2 runs, i9):
+raw 1/39 clips differ between runs (PER 4.1 / 4.3 %), +1 s pad 1/39 (4.3 / 4.1 %), **30 s pad 0/39 (4.1 / 4.1 %)**,
+equal to S3's soup number. Current honest system: soup q8_0 + cascade t = −0.20 + snap = WER 9.9 %, PER 4.3 %,
+vowel 6.1 %. Latency still unmeasured on an idle box (both machines were loaded).
