@@ -196,3 +196,23 @@ which adapter to trust per utterance would take two thirds of the remaining erro
 can do that today (the cue would have to come from the audio or from agreement between the two decodes), and
 that is the E2 structure again, from the error side. Added to E2's reading: the oracle bound is the number any
 mixture must be compared against.
+
+### E1, arm C scored 2026-10-09 (`results/20261009-154244/`): the cloned voice hurts
+
+Reference clip: the longest 4–14 s train-split recording; 300 sentences synthesised (NeuTTS Nano German + NeuCodec,
+both gated on HF, accepted by Ale), DoRA recipe identical to `lora-dora-r32` plus `--extra-manifest`. Training
+reached train WER 0.0 % against dev 25.5 %: it memorised.
+
+| system (+snap) | WER | CER | PER |
+|---|---|---|---|
+| DoRA r32 (baseline) | 13.2 % | 4.1 % | 5.8 % |
+| C: DoRA r32 + 300 cloned-voice sentences | 23.1 % | 7.4 % | 8.8 % |
+
+PER difference C − baseline: **+3.0 points [−0.7, +7.5], P(C ≥ baseline) = 0.94** → under the rule, no evidence
+on PER (interval touches zero), hurts on WER (+9.9). Prediction held: the clone copies timbre, not articulation.
+The profile says where: the clone damaged the **consonants** the real adapter had learned (plosives 3.4 → 6.9 %,
+fricatives 4.3 → 7.9 %, liquids 1.9 → 11.5 %, nasals 0 → 5.3 %) while vowels barely moved (8.3 → 9.2 %). A codec
+clone of a dysarthric voice sounds like him and articulates like the model; training on it teaches consonants he
+does not produce. Oracle of the two: 3.5 % vs 5.8 %, 23 shared errors, so C is not useless as a second opinion,
+but it is not a data source. **Voice banking stays a feature (the assistant's reply voice), not training data.**
+Closed; the next augmentation claim waits for more held-out words.
