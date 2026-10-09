@@ -34,3 +34,12 @@ def test_gruut_if_installed():
     g2p = pm.gruut_g2p()
     assert "ç" in g2p("ich möchte") and g2p("Uhr") == g2p("Ur") or g2p("Uhr")  # homophones map close or identical
     assert g2p("xyzzyq")                                                      # unknown word falls back to letters
+
+
+def test_attribution_counts_fixed_and_broken():
+    raw = np.array([[10, 3], [10, 0], [10, 2]], float)
+    snap = np.array([[10, 1], [10, 1], [10, 2]], float)      # fixes 2 phones in u1, breaks 1 in u2
+    a = pm.attribution({"raw": raw, "snap": snap})
+    assert a["raw"]["errors"] == 5 and "fixed" not in a["raw"]
+    assert a["snap"] == {"per": pytest.approx(4 / 30), "errors": 4, "fixed": 2, "broken": 1,
+                         "utterances_improved": 1, "utterances_worsened": 1}

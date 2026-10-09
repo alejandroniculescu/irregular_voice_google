@@ -75,6 +75,23 @@ def paired_bootstrap(A: np.ndarray, B: np.ndarray, draws: int = 10000, seed: int
             "p_diff_ge_0": float(np.mean(bs >= 0)), "n_utterances": n}
 
 
+def attribution(stages: dict[str, np.ndarray]) -> dict:
+    """Where errors are born and which expert removes them, from per-utterance (ref phones, errors) arrays of
+    successive stages (e.g. raw -> snap -> llm). Per stage: phones wrong, phones fixed since the previous stage,
+    phones newly broken since the previous stage (an expert can also hurt), and the corpus PER."""
+    names = list(stages)
+    out, prev = {}, None
+    for name in names:
+        a = stages[name]
+        row = {"per": per(a), "errors": int(a[:, 1].sum())}
+        if prev is not None:
+            d = a[:, 1] - prev[:, 1]
+            row["fixed"] = int(-d[d < 0].sum()); row["broken"] = int(d[d > 0].sum())
+            row["utterances_improved"] = int((d < 0).sum()); row["utterances_worsened"] = int((d > 0).sum())
+        out[name] = row; prev = a
+    return out
+
+
 def load_rows(csv_path: Path) -> list[dict]:
     with csv_path.open(encoding="utf-8") as f:
         return list(csv.DictReader(f))
@@ -86,6 +103,7 @@ def main(argv=None) -> None:
     parser.add_argument("--pair", nargs=2, metavar=("A", "B"), help="two CSV stems to bootstrap (B minus A)")
     parser.add_argument("--draws", type=int, default=10000)
     parser.add_argument("--out", help="JSON output (default: <results_dir>/per.json)")
+    parser.add_argument("--stages", help="a system stem, e.g. models__lora-dora-r32: attribute errors over raw -> +snap -> +snap+llm")
     args = parser.parse_args(argv)
     d = Path(args.results_dir)
     g2p = gruut_g2p()
@@ -102,6 +120,13 @@ def main(argv=None) -> None:
         q = res["pair"]
         print(f"{args.pair[1]} minus {args.pair[0]}: {q['diff']:+.3f} [{q['ci95'][0]:+.3f}, {q['ci95'][1]:+.3f}], "
               f"P(diff >= 0) = {q['p_diff_ge_0']:.3f}")
+    if args.stages:
+        files = {"raw": f"{args.stages}.csv", "snap": f"{args.stages}+snap.csv", "llm": f"{args.stages}+snap+llm.csv"}
+        present = {k: d / v for k, v in files.items() if (d / v).exists()}
+        res["attribution"] = attribution({k: per_rows(load_rows(p), g2p) for k, p in present.items()})
+        for k, r in res["attribution"].items():
+            extra = f"  fixed {r['fixed']:3d}  broken {r['broken']:3d}  (utterances {r['utterances_improved']}↑ {r['utterances_worsened']}↓)" if "fixed" in r else ""
+            print(f"stage {k:<5} PER {r['per']:6.1%}  errors {r['errors']:3d}{extra}")
     out = Path(args.out) if args.out else d / "per.json"
     out.write_text(json.dumps(res, indent=2, ensure_ascii=False), encoding="utf-8")
     print(f"wrote {out}")

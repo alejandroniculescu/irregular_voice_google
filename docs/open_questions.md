@@ -175,3 +175,10 @@ expert removed it". One table per system; the slide that says which part fails. 
 
 Order: arm C finishes (GPU) → E3a (Ollama on the same GPU, so not concurrent) → attribution table. All on ahms,
 none needs Ale.
+
+**Per-expert attribution, first numbers (2026-10-09, `ivg-per --stages`, 657 phones).** DoRA r32: raw 40 phones
+wrong (6.1 %); after snap 38 (5.8 %): snap **fixed 8 and broke 6**, 3 utterances better, 5 worse. Plain LoRA r32:
+raw 82 (12.5 %); after snap 72 (11.0 %). Reading: the lexical expert earns its place on a weaker acoustic expert
+and is nearly net-zero on the best one; what it breaks is a real word swapped for a sound-alike that was not
+said. That is the E3a question in miniature, and the sound gate on the LLM fallback has the same risk, measured
+the same way.
