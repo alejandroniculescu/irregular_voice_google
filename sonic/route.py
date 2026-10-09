@@ -87,6 +87,21 @@ def fmt(s: dict) -> str:
     return f"WER {s['wer']:6.1%}  CER {s['cer']:5.1%}  PER {s['per']:5.1%}  vowel {s['vowel']:5.1%}"
 
 
+def cascade(decode, n_experts: int, threshold: float) -> tuple[str, list[int]]:
+    """Confidence routing with early exit: ``decode(k)`` returns (text, mean log-prob) of expert k. Expert 0 decodes
+    first; if its log-prob is at least ``threshold`` it is the answer, else every expert decodes and the most
+    confident wins. Returns the text and the experts that ran."""
+    text, lp = decode(0)
+    if lp >= threshold or n_experts == 1:
+        return text, [0]
+    best = (lp, 0, text)
+    for k in range(1, n_experts):
+        t, l = decode(k)
+        if l > best[0]:
+            best = (l, k, t)
+    return best[2], list(range(n_experts))
+
+
 def main(argv=None) -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("results_dir")

@@ -1,4 +1,4 @@
-from sonic.route import medoid, rover, switch
+from sonic.route import cascade, medoid, rover, switch
 
 
 def letters(text):
@@ -25,3 +25,17 @@ def test_rover_drops_majority_deletion():
 def test_medoid_picks_consensus_and_ties_to_pivot():
     assert medoid(["zzz", "abc", "abd", "abc"], letters) == 1
     assert medoid(["abc", "abd"], letters) == 0
+
+
+def test_cascade_exits_early_when_confident():
+    calls = []
+    def decode(k):
+        calls.append(k)
+        return ["a", "b", "c"][k], [-0.01, -0.5, -0.001][k]
+    assert cascade(decode, 3, -0.05) == ("a", [0]) and calls == [0]
+
+
+def test_cascade_escalates_and_picks_most_confident():
+    def decode(k):
+        return ["a", "b", "c"][k], [-0.2, -0.5, -0.1][k]
+    assert cascade(decode, 3, -0.05) == ("c", [0, 1, 2])

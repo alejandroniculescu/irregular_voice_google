@@ -22,7 +22,7 @@ personal LoRA adapter trained on Christian's voice.
 - **What it is.** NeuTTS-Air: text-to-speech, ~0.5 B parameters (small LLM + NeuCodec), GGUF through llama.cpp,
   runs on a phone or a Raspberry Pi, Apache 2.0, clones a voice from 3–15 s of clean reference audio, output
   watermarked. Repo: https://github.com/neuphonic/neutts-air . German is a separate "Nano" model under
-  Neuphonic's own licence (NeuTTS Open License 1.0), to be read before anything ships.
+  Neuphonic's own licence (NeuTTS Open License 1.0); Ale has reviewed and approved it (noted 2026-10-09).
 - **Why here.** The satellite already runs whisper.cpp (GGML) for recognition; NeuTTS would give it a reply
   voice in the same on-device family, so the privacy line (nothing leaves the phone) holds for output as well
   as input.
@@ -270,3 +270,130 @@ prediction (consensus of weaker systems pulls toward shared errors) was wrong: t
 Caveats: same 39 clips the oracle was read on, no held-out set; medoid has no fitted parameters, so this is not
 overfitting a router, but the system set was chosen knowing these clips. Cost for Track 2: 3 decodes per
 utterance on CPU; the 3-system medoid is the cheapest that keeps the full gain.
+
+## 2026-10-09 — S1: the router on CPU whisper.cpp, and what the encoder window costs (written before any number)
+
+Track 2 is scored on CPU, and on CPU the encoder is the whole cost: one padded 30 s encode of large-v3-turbo q5_0 is
+8.7 s via `whisper-cli` on the M3 (4 threads), the decode 0.06 s. Shrinking `audio_ctx` to the audio cut encode 11×
+but made the decoder loop (114 → 3845 decode steps on 8 clips). `sonic/engine.py` runs whisper.cpp in-process
+(model loaded once, greedy, token cap 8/s of audio) and returns mean token log-prob; `sonic/bench.py` scores the
+three medoid experts (DoRA r32, r16, aug-synth, merged, q5_0) at encoder window full (0), auto (audio + 1 s) and
+512 (≈10 s), raw (no snap), then medoid and **confidence** (highest mean log-prob) routers over them.
+Reading: per window, WER/CER/PER/vowel against the same expert at full window; a window is usable if PER rises by
+under 1 point. Router: medoid vs confidence vs DoRA alone at the chosen window. Prediction: whisper.cpp at full
+window within a point of the HF numbers (DoRA raw PER 6.1 %); auto window *hurts* (fine-tuned on padded audio);
+512 in between; confidence no better than DoRA alone (Whisper's log-probs are overconfident on fluent wrong words),
+medoid holds most of its gain from R1.
+
+### S1 scored 2026-10-09 (`results/sonic/20261009-174739/`): confidence routing wins; the short window breaks
+39 clips, raw (no snap), whisper.cpp q5_0 in-process, CPU, 4 threads on the M3.
+
+| system | WER | CER | PER | vowel | sec/clip |
+|---|---|---|---|---|---|
+| DoRA @ full window | 19.8 % | 5.6 % | 6.1 % | 4.5 % | 3.29 |
+| r16 @ full | 22.3 % | 5.7 % | 5.9 % | 3.1 % | 3.62 |
+| aug-synth @ full | 26.4 % | 8.5 % | 9.4 % | 5.4 % | 3.42 |
+| DoRA @ 512 (≈10 s) | 24.0 % | 7.2 % | 7.6 % | 4.9 % | 0.86 |
+| DoRA @ auto (audio + 1 s) | 162.8 % | 111.6 % | 106.6 % | 44.2 % | 0.38 |
+| medoid of 3 @ full | 16.5 % | 4.2 % | 4.5 % | 3.1 % | 10.3 |
+| **confidence of 3 @ full** | **12.4 %** | **2.8 %** | **3.0 %** | **1.8 %** | 10.3 |
+| confidence of 3 @ 512 | 21.5 % | 5.7 % | 6.1 % | 3.1 % | 2.67 |
+
+Readings against the predictions. whisper.cpp at full window equals HF (DoRA raw PER 6.1 % both): as predicted.
+Auto window **breaks** (the decoder loops or invents; worse than predicted); 512 costs +1.5 PER points
+(P = 0.94 worse), over the 1-point rule, so **the final decode stays at the full window**; 512 is for partials
+only. Confidence router vs DoRA: **helps**, −3.0 points [−6.6, −0.8], P < 0.001; vs medoid: helps, −1.5 points,
+P = 0.025. The prediction (Whisper over-confident, confidence no better than DoRA) was wrong: per-adapter mean
+log-prob is a usable cue between adapters of the same base. Medoid on CPU decodes is weaker than on the HF decodes
+in R1 (4.5 vs 3.3 %), so R1's ranking does not carry over between decoders. Oracle over the three: 1.2 %.
+Cascade (offline, same decodes): DoRA first, escalate to all three only if DoRA's mean log-prob < t. t from −0.02 to
+−0.08 keeps PER 3.0 % with 29 → 19 of 39 clips escalated (mean 8.5 → 6.7 s); t = −0.20 gives 4.0 % at 4.6 s.
+Chosen t = −0.05, mid-plateau, since t was read on these clips. Cost is the open problem: a full-window encode is
+3.3 s per expert on 4 M3 cores; TTLT ≈ 3.3 s (confident) to 10 s (escalated) unless the experts run in parallel.
+
+## 2026-10-09 — C1: how early could a closed-set command expert commit? (cohort uniqueness points; written before any number)
+
+Idea (Ale): a deterministic command expert that commits as soon as the heard prefix leaves one command, instead of
+waiting for the utterance to end (Marslen-Wilson's cohort model: a word is recognised at its uniqueness point).
+Measured without any model: every canonical home command (`home.phrase`: device + room + action over
+`home_de.json` and `ACTIONS`, about 110) and every short command in `commands_de.txt`, in gruut IPA; uniqueness
+point = phones until no other command shares the prefix; saving = phones after it ÷ his speaking rate (phones per
+second of voiced time on the 39 test clips, energy onset to offset). Second variant with vowels as wildcards,
+since vowels are his weakest class (8.3 % vs ≤ 4.3 % for every consonant class): a commit that needs a vowel to
+decide is a commit on his least reliable sound.
+Reading: median and spread of the saving in ms per set. Worth building for the demo if the median saving on the
+home commands is ≥ 500 ms with vowels as wildcards. Prediction: no: the deciding word is the action, which comes
+last, and an/aus differ in the vowel; median saving under 200 ms, near 0 with vowel wildcards. The short commands
+may do better (single words, unique early). If so, the lever is the phrasing (action first: "Aus, Licht im Flur"),
+not the model.
+
+### C1 scored 2026-10-09 (`sonic/cohort.py`, `results/sonic/cohort.json`): the phrasing is the lever, not the model
+His rate on the test clips: 10.0 phones/s (100 ms per phone, energy onset to offset). Uniqueness-point savings:
+
+| command set / order | median saving | p25–p75 | ≥ 500 ms |
+|---|---|---|---|
+| home, device room action (today: "Licht im Flur an") | 100 ms | 0–500 | 33 % |
+| home, room device action | 100 ms | 0–500 | 33 % |
+| home, **device action room** ("Licht an im Flur") | **550 ms** | 275–825 | **62 %** |
+| home, action device room | 550 ms | 275–825 | 62 % |
+| short commands (`commands_de.txt`, 24) | 350 ms | 200–624 | 29 % |
+
+Vowels as wildcards change nothing (today 1 phone, room last 6 phones median): the deciding phones are consonants,
+his reliable class. (The first run printed "0 %" at ≥ 500 ms for today's order: the rate is just over 10/s, so
+5 phones came out as 499 ms. 33 % is right.)
+Reading: the prediction held for today's order (median 100 ms: the action comes last and decides). Every slot
+carries information, so a command can only become unique inside its last word; the order decides which word that
+is. With the room last (long, consonant-distinct words), the median command could fire 550 ms before he finishes:
+passes the 500 ms bar. `home.parse` already reads slots in any order, so "Licht an im Flur" needs no parser change,
+only a suggested phrasing. Next: a prefix-commit command expert in `sonic/` fed by the streaming partials, judged
+on the 15-command replay (0 wrong actions stays the hard constraint) and on ms saved in practice, which will be
+less than this bound (the partials lag the audio by one decode).
+
+## 2026-10-09 — S2: the kit run, and the latency fixes (first run scored; fixes written before their numbers)
+First `local_decode.py` run on the 39 clips (`results/sonic/kit/`, M3, 4 threads, partials every 0.5 s at 512,
+final = confidence cascade at full window, t = −0.05): WER 14.0 %, CER 3.1 %, **PER 3.3 %**, vowel 1.8 %; reject
+rule 1 (early first word, energy onset) 0/39, rule 2 (Pass 1 = Pass 2 finals) 39/39: **both pass**. Latency fails
+any sensible bar: TTFT-stable median 5.3 s (p90 15.7), TTLT median 13.3 s. Cause: backpressure, a 0.86 s partial
+every 0.5 s of audio, so chunks queue; then a 3.3–10 s final. Parallel experts: the bindings release the GIL
+(2 threads × 3 experts: 14.0 → 8.7 s) but 4 M3 performance cores are the ceiling; it pays only on a many-core box.
+Fixes: (a) shed partial decodes while the decoder lags the audio by > 0.2 s; (b) a final window of 768 or 1024 if
+one stays within the 1-point PER rule. Prediction: (a) brings TTFT-stable under 2 s median and TTLT to the final's
+own cost (≈ 3.3 s confident, ≈ 10 s escalated, median ≈ 5 s); (b) 1024 within a point, 768 not.
+S2 (b) scored (`results/sonic/20261009-181827/`): DoRA alone is window-insensitive from 768 up (768 +0.3, 1024
+−0.1 PER points vs full); the confidence router is not: 768 **+2.2** [+0.6, +4.3] (fails the 1-point rule),
+1024 +0.6 [+0.1, +1.1] (PER 3.6 %, WER 15.7 %, CER 3.3 %, vowel 1.8 %; passes). Per-expert cost 3.3 → 2.0 s.
+Reading: the log-probs that do the routing are more window-sensitive than the argmax text. Final window → 1024,
+threshold left at −0.05 (calibrated at full; not refit on the same clips). Prediction (b) held for 1024; for 768
+it held for DoRA alone and failed for the router.
+S2 (a) scored, second kit run (`results/sonic/kit2/`: shedding on, final window 1024): WER 16.5 %, CER 3.7 %,
+PER 4.0 %, vowel 2.2 %; TTFT-stable median **3.35 s** (p90 8.7), TTLT median **6.0 s** (p90 7.1); rules 1 and 2
+pass. Reading: shedding and the shorter final more than halved both latencies, but missed the prediction (TTFT <
+2 s): a partial decode still costs ~0.9 s and the gate waits for 200 ms of speech plus the first decode.
+PER 4.0 vs 3.6 % in the bench at 1024: the cascade threshold was calibrated at the full window, and log-probs
+shift with the window, so fewer clips escalate. Next (docs/research_2026-10-09.md): soup, quantization sweep,
+speculative final, short-window training.
+
+## 2026-10-09 — S3: soup, quantization on x86, short-window adapter (ahms i9-14900K, 4 threads, CPU)
+Predictions (before the run, from docs/research_2026-10-09.md): soup within reach of the router (MAS-LoRA); q4_0
+faster than q5_0 on x86 (whisper.cpp #3752); the short-window adapter works at a fitted window (ACFT-like).
+
+| model @ window | WER | CER | PER | vowel | sec/clip |
+|---|---|---|---|---|---|
+| DoRA q4_0 @ full | 23.1 % | 6.3 % | 6.7 % | 4.9 % | 5.80 |
+| DoRA q5_0 @ full | 20.7 % | 5.9 % | 6.5 % | 4.5 % | 10.32 |
+| DoRA q8_0 @ full | 18.2 % | 5.3 % | 5.8 % | 4.5 % | 7.36 |
+| DoRA q4_0 @ 1024 | 25.6 % | 6.3 % | 6.7 % | 4.5 % | 3.59 |
+| **soup (DoRA+r16+aug-synth, uniform) q5_0 @ full** | **13.2 %** | **3.3 %** | **3.6 %** | 3.1 % | 10.33 |
+| soup q5_0 @ 1024 | 14.0 % | 4.0 % | 4.3 % | 3.6 % | 6.69 |
+| short-window DoRA q5_0 @ fit (floor 128) | 76.9 % | 47.2 % | 47.2 % | 25.0 % | 1.20 |
+| short-window DoRA q5_0 @ 512 / 1024 / full | 18.2 / 16.5 / 17.4 % | | 8.0 / 5.8 / 5.9 % | | 3.24 / 7.10 / 11.20 |
+
+Readings. **Soup helps**: one pass, PER 3.6 % vs DoRA 6.5 % on the same box, against 3.0 % for the 3-pass
+confidence router (S1, M3): most of the mixture's gain at a third of the cost; prediction held. Quantization:
+on x86 q5_0 is the slowest format (q4_0 1.8×, q8_0 1.4× faster) and q8_0 also the most accurate; prediction held
+for q4_0, q8_0 a surprise. The i9 at 4 threads is ~3× slower than the M3 for the same model (10.3 vs 3.3 s at
+q5_0): if the evaluation box is x86, every latency above triples. (Corpus downloads ran on one core alongside.)
+Short-window adapter: **failed** at a fitted window in whisper.cpp although HF dev WER was fine during training;
+suspects: HF `generate` padding the cropped dev features back to 3000 (so dev never tested short windows), or a
+crop mismatch with whisper.cpp. Parked; not on the critical path.
+Next: soup at q8_0 and q4_0; the Track 2 model becomes soup-first (one pass), with the experts as the escalation.
