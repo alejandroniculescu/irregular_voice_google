@@ -73,6 +73,9 @@ def main(argv=None) -> None:
     parser.add_argument("--augment", type=float, default=0.0,
                         help="per-effect probability of the Whisper recipe's augmentation (speed, low-pass, reverb, noise)")
     parser.add_argument("--encoder-only", action="store_true", help="freeze everything but the encoder")
+    parser.add_argument("--phone-ctc", type=float, default=0.0,
+                        help="weight of an auxiliary CTC loss from a linear head on the encoder to his German IPA "
+                             "phones (gruut); training only, the saved model is unchanged")
     args = parser.parse_args(argv)
 
     random.seed(args.seed); torch.manual_seed(args.seed)
@@ -87,6 +90,17 @@ def main(argv=None) -> None:
     trainable = [p for p in model.parameters() if p.requires_grad]
     print(f"trainable parameters: {sum(p.numel() for p in trainable) / 1e6:.0f} M", flush=True)
     rng = np.random.default_rng(args.seed)
+    head, phone_ids, g2p = None, {}, None
+    if args.phone_ctc:
+        from irregular_voice_google.per import gruut_g2p
+        g2p = gruut_g2p()
+        for u in train + dev:
+            u["phones"] = g2p(u["text"])
+            for ph in u["phones"]:
+                phone_ids.setdefault(ph, len(phone_ids) + 1)          # 0 is the CTC blank
+        head = torch.nn.Linear(model.config.encoder_config.hidden_size, len(phone_ids) + 1).to(device)
+        trainable += list(head.parameters())
+        print(f"phone CTC head: {len(phone_ids)} phones, weight {args.phone_ctc}", flush=True)
     opt = torch.optim.AdamW(trainable, lr=args.lr, weight_decay=0.01)
     sched = torch.optim.lr_scheduler.LambdaLR(opt, lambda s: min(1.0, (s + 1) / args.warmup))
 
@@ -104,7 +118,19 @@ def main(argv=None) -> None:
             inputs = processor(audio, text=[u["text"] for u in batch],
                                sampling_rate=SAMPLE_RATE, return_tensors="pt").to(device)
             with torch.autocast(device, dtype=torch.bfloat16):
-                loss = model(**inputs).loss
+                if head is None:
+                    loss = model(**inputs).loss
+                else:
+                    enc = model.get_audio_features(input_features=inputs["input_features"],
+                                                   attention_mask=inputs.get("attention_mask"))
+                    rest = {k: v for k, v in inputs.items() if k not in ("input_features", "attention_mask")}
+                    loss = model(encoder_outputs=enc, **rest).loss          # labels and decoder_input_ids
+                    logp = torch.log_softmax(head(enc.last_hidden_state).float(), -1).transpose(0, 1)
+                    targets = [torch.tensor([phone_ids[ph] for ph in u["phones"]]) for u in batch]
+                    ctc = torch.nn.functional.ctc_loss(
+                        logp, torch.cat(targets).to(device), enc.attention_mask.sum(-1),
+                        torch.tensor([len(t) for t in targets], device=device), blank=0, zero_infinity=True)
+                    loss = loss + args.phone_ctc * ctc
             loss.backward()
             torch.nn.utils.clip_grad_norm_(trainable, 1.0)
             opt.step(); sched.step(); opt.zero_grad(set_to_none=True)

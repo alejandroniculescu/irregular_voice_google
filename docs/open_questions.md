@@ -754,3 +754,58 @@ main lever (B), augmentation helped only together with it (C alone was worse), s
 Parakeet E equals the soup on WER, beats it on CER (−0.4) and vowels (−0.9), trails on PER (+0.8), at ~1/40 of the
 decode cost and inside a live-call latency on 2 cores. Not yet tuned further (lr 1e-4, more epochs, encoder-only
 with lr 3e-5 + augmentation); and R2 should be rerun with E as the second expert.
+
+## 2026-10-10 — R3 and P4 (written before any run)
+**R3:** R2's rule unchanged (equal weights, judges z-scored on dev), with Parakeet E as the second expert and as the
+Parakeet judge. Bar: WER, CER and PER all below **both** single experts (WER < 13.2 %, CER < 3.1 %, PER < 4.1 %).
+Prediction: passes, around WER 11 %, CER 2.6 %, PER 3.3 %: two experts of equal strength with complementary errors
+(M1) should gain more than R2's weak-partner pair.
+**P4:** two more arms around E, same protocol (dev selection, the winner replaces E only if ≥ 1.0 point better on
+dev, then test once): F = lr 1e-4 + augmentation 0.5; G = encoder only + lr 3e-5 + augmentation 0.5.
+Prediction: neither clears the bar (E is near what 278 clips allow; F risks instability, G ≈ E since G trains 97 %
+of E's parameters).
+
+### R3 scored (`results/sonic/r3/`): fails the bar
+| system | dev WER / CER / PER / vowel | test WER / CER / PER / vowel |
+|---|---|---|
+| soup alone | 12.4 / 3.5 / 4.6 / 4.7 % | 13.2 / 3.5 / 4.1 / 4.8 % |
+| Parakeet E alone | 17.5 / 4.6 / 6.5 / 4.3 % | 13.2 / 3.1 / 4.9 / 3.9 % |
+| R3, equal weights (the rule) | 12.4 / 3.6 / 4.3 / 2.7 % | 12.4 / 3.5 / 4.3 / 3.9 % |
+| R3, w_parakeet = 0.25 (dev-chosen, secondary) | 10.9 / 2.5 / 3.3 / 2.7 % | 11.6 / 3.2 / 3.8 / 3.9 % |
+
+Reading: **fails** (needs WER < 13.2, CER < 3.1, PER < 4.1 together): the rule lowers WER only; the dev-chosen weight
+lowers WER and PER below both experts but misses CER by 0.1 (3.2 vs 3.1). Prediction wrong. Why: the tuned
+Parakeet judge prefers its own text on 35/35 dev clips (R2's weaker Parakeet judge: 34/35, but its z-scores were
+spread by its errors): the better a model fits him, the more its self-preference swamps an equal vote. Note E is
+much worse on dev than on test (CER 4.6 vs 3.1), although dev chose its epoch: 35 vs 39 clips, so per-split
+numbers move by a point or more. Cross-scoring as it stands is not the route to sub-10 WER on the fast path.
+
+## 2026-10-10 — P5: an auxiliary phone loss in the Parakeet fine-tune (written before any run)
+Question (Ale): can phonetic supervision push the fast path under 10 % WER? Arm H = E (lr 3e-5, augmentation 0.5)
+plus a linear head on the encoder's last hidden state, trained with CTC against his German IPA phones (gruut, the
+PER inventory; train+dev transcripts), loss = TDT + 0.3 × phone CTC. The head is dropped after training; inference
+is unchanged. Same seed, stopping rule and decision rule (≥ 1.0 dev CER point better than E's 4.5 %, or the winner
+of P4 if that moved; then test once, offline and streaming). Also reported: test PER and vowel error, the classes
+the head targets. Risk: the encoder runs at 12.5 frames/s and he speaks ~9 phones/s, so CTC is tight on fast
+stretches (`zero_infinity` drops infeasible clips).
+Prediction: dev CER within ±1 point of E (no clear win); test PER improves by ~0.5 point, WER does not go under
+10 % from this alone (16 → ≤ 12 word errors needs more than a phone prior).
+
+### P4 scored: E stays
+Best dev CER: F (lr 1e-4 + augmentation) 5.1 %, G (encoder only + lr 3e-5 + augmentation) 4.2 %, against E's 4.5 %.
+Neither clears the 1-point bar (G −0.3 is within dev noise); prediction held. F and G deleted; not scored on test.
+
+### P5 scored: the phone loss does not help; E stays
+H (E + 0.3 × phone CTC, 47 phones): best dev CER 4.2 % in training vs E's 4.5 % → under the 1-point bar, not
+tested (test kept untouched). For the question it was meant to answer, dev decodes of both
+(`ahms:results/sonic/20261010-180448/`; dev chose both epochs, so both are optimistic):
+
+| dev (35 clips) | WER | CER | PER | vowel |
+|---|---|---|---|---|
+| Parakeet E | 17.5 % | 4.6 % | 6.5 % | 4.3 % |
+| Parakeet H (+ phone CTC) | 16.8 % | 4.5 % | 6.9 % | 4.3 % |
+
+Reading: no gain on the phone classes it targets (PER +0.4, vowels equal); prediction (no clear dev win) held, the
+hoped-for PER gain did not appear. With 278 clips the text loss already carries the phonetic signal; a phone head
+adds no information the transcripts lack. H deleted. Run H's first launch crashed (decoder inputs not passed when
+encoder outputs are given; fixed before the run reported here).
