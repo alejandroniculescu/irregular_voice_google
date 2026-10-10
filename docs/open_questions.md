@@ -725,3 +725,32 @@ JLShen 0.91 + 0.38 s, takagi 0.40 + 0.15 s. Prediction held on both (TTLT ≤ 0.
 Reading: the speed side of the live-call system works on 2 cores with re-decoding alone (no cache-aware encoder);
 the open problem is accuracy at that latency. TTFT is now mostly LocalAgreement (two agreeing decodes 0.25 s apart)
 plus the 0.2 s gate; the p90 comes from long clips, where each re-decode grows with the buffer.
+
+## 2026-10-10 — P3: tuning the Parakeet fine-tune (written before any run)
+Arms on GPU 1 / CPUs 2-7, same seed, same stopping rule (dev CER, patience 5, ≤ 40 epochs), test untouched:
+A = run 3 (lr 1e-5, no augmentation; dev 7.5 %), B = lr 3e-5, C = A + augmentation (the Whisper recipe's
+speed / low-pass / reverb / noise, p = 0.5 per effect), D = A with the encoder only trained, E = lr 3e-5 +
+augmentation. Decision: the arm with the lowest best-dev CER replaces A only if it beats A's 7.5 % by ≥ 1.0 point
+(dev moves ±1.5 epoch to epoch, so smaller is noise); only that one arm is scored on test, once, and in S6's
+streaming harness. Prediction: augmentation helps most (it did for Whisper: the DoRA recipe uses 0.5), C or E
+reaches dev 5–6 %; B converges faster but no better; D is worse (the joint and prediction networks must learn his
+German text style too). On test the winner lands at CER 6–8 %.
+
+### P3 scored (`ahms:results/sonic/p3/`, GPU 1 / CPUs 2-7)
+Best dev CER per arm: A (run 3) 7.5 %, **B lr 3e-5 5.1 %**, C augmentation 8.5 %, **D encoder only 5.8 %**
+(trains 609 of 627 M parameters: the prediction and joint networks are only 18 M), **E lr 3e-5 + augmentation
+4.5 %** → E replaces A (−3.0 points, past the 1-point bar). B, C, D deleted (losers, reproducible from the seed).
+E on test, once (`ahms:results/sonic/20261010-172143/`; streaming `ahms:results/sonic/kit_p3/`, CPUs 2-5):
+
+| system | WER | CER | PER | vowel | TTFT-stable / TTLT (median) |
+|---|---|---|---|---|---|
+| soup q8_0 | 13.2 % | 3.5 % | 4.1 % | 4.8 % | 12.7 s / 11.2 s (M3, S5b) |
+| Parakeet A (run 3) | 28.9 % | 8.9 % | 11.9 % | 8.7 % | 1.12 s / 0.30 s (S6) |
+| **Parakeet E** | **13.2 %** | **3.1 %** | 4.9 % | **3.9 %** | **1.12 s / 0.29 s** (p90 2.47 / 0.49) |
+| Parakeet E + snap | 11.6 % | 3.5 % | 5.3 % | 5.2 % | |
+
+Rules 1 and 2 pass. Reading: prediction **beaten** (predicted test CER 6–8 %; got 3.1 %). The learning rate was the
+main lever (B), augmentation helped only together with it (C alone was worse), so the first run was undertrained.
+Parakeet E equals the soup on WER, beats it on CER (−0.4) and vowels (−0.9), trails on PER (+0.8), at ~1/40 of the
+decode cost and inside a live-call latency on 2 cores. Not yet tuned further (lr 1e-4, more epochs, encoder-only
+with lr 3e-5 + augmentation); and R2 should be rerun with E as the second expert.

@@ -20,6 +20,7 @@ import numpy as np
 import torch
 from transformers import AutoModel, AutoProcessor
 
+from irregular_voice_google.augment import augment
 from irregular_voice_google.text import normalize
 from sonic.bench_io import read_wav
 
@@ -69,6 +70,9 @@ def main(argv=None) -> None:
     parser.add_argument("--patience", type=int, default=5)
     parser.add_argument("--warmup", type=int, default=50, help="linear warm-up steps")
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--augment", type=float, default=0.0,
+                        help="per-effect probability of the Whisper recipe's augmentation (speed, low-pass, reverb, noise)")
+    parser.add_argument("--encoder-only", action="store_true", help="freeze everything but the encoder")
     args = parser.parse_args(argv)
 
     random.seed(args.seed); torch.manual_seed(args.seed)
@@ -77,7 +81,13 @@ def main(argv=None) -> None:
     train, dev = split(manifest, "train"), split(manifest, "dev")
     processor = AutoProcessor.from_pretrained(args.base)
     model = AutoModel.from_pretrained(args.base).to(device).train()
-    opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=0.01)
+    if args.encoder_only:
+        for name, p in model.named_parameters():
+            p.requires_grad = name.startswith("encoder.")
+    trainable = [p for p in model.parameters() if p.requires_grad]
+    print(f"trainable parameters: {sum(p.numel() for p in trainable) / 1e6:.0f} M", flush=True)
+    rng = np.random.default_rng(args.seed)
+    opt = torch.optim.AdamW(trainable, lr=args.lr, weight_decay=0.01)
     sched = torch.optim.lr_scheduler.LambdaLR(opt, lambda s: min(1.0, (s + 1) / args.warmup))
 
     log = {"args": vars(args), "train": len(train), "dev": len(dev), "epochs": []}
@@ -90,12 +100,13 @@ def main(argv=None) -> None:
         losses = []
         for i in range(0, len(train), args.batch):
             batch = train[i:i + args.batch]
-            inputs = processor([u["audio"] for u in batch], text=[u["text"] for u in batch],
+            audio = [augment(u["audio"], rng, args.augment) if args.augment else u["audio"] for u in batch]
+            inputs = processor(audio, text=[u["text"] for u in batch],
                                sampling_rate=SAMPLE_RATE, return_tensors="pt").to(device)
             with torch.autocast(device, dtype=torch.bfloat16):
                 loss = model(**inputs).loss
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            torch.nn.utils.clip_grad_norm_(trainable, 1.0)
             opt.step(); sched.step(); opt.zero_grad(set_to_none=True)
             losses.append(loss.item())
         cer = dev_cer(model, processor, dev, device)
