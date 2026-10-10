@@ -11,15 +11,14 @@ Prints numbers only, never transcripts.
 from __future__ import annotations
 
 import argparse
-import csv
 import json
-import wave
 from datetime import datetime
 from pathlib import Path
 
 import numpy as np
 
 from irregular_voice_google.per import gruut_g2p
+from sonic.bench_io import read_wav, test_clips, write_csv
 from sonic.engine import Expert, audio_ctx_for
 from sonic.route import fmt, medoid, scores
 
@@ -28,23 +27,6 @@ EXPERTS = {
     "r16": "models/ggml/models__lora-r16-q5_0.bin",
     "synth": "models/ggml/models__lora-aug-synth-q5_0.bin",
 }
-
-
-def read_wav(path: Path) -> np.ndarray:
-    with wave.open(str(path)) as f:
-        return np.frombuffer(f.readframes(f.getnframes()), np.int16).astype(np.float32) / 32768
-
-
-def test_clips(manifest: Path) -> list[dict]:
-    with manifest.open(encoding="utf-8") as f:
-        return [{"audio": str(manifest.parent / r["audio"]), "reference": r["text"]}
-                for r in csv.DictReader(f) if r["split"] == "test"]
-
-
-def write_csv(path: Path, rows: list[dict]) -> None:
-    with path.open("w", encoding="utf-8", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=list(rows[0]))
-        w.writeheader(); w.writerows(rows)
 
 
 def main(argv=None) -> None:

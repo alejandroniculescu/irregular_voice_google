@@ -13,7 +13,7 @@ log-prob is below ``SONIC_ESCALATE`` the other experts decode too and the most c
 
 Configuration by environment, so the same file runs locally and in the submission:
 ``SONIC_MODELS`` (dir of the ggml experts), ``SONIC_EXPERTS`` (comma list of file stems, first one streams),
-``SONIC_THREADS``, ``SONIC_LANG``, ``SONIC_SNAP`` (a manifest: its train transcripts, the commands and lexicons feed
+``SONIC_ENGINE`` (``whisper`` or ``parakeet``: then SONIC_EXPERTS are transformers model ids or paths), ``SONIC_THREADS``, ``SONIC_LANG``, ``SONIC_SNAP`` (a manifest: its train transcripts, the commands and lexicons feed
 ``snap`` on the final, non-words to the closest same-sounding real word; empty = off; S4: WER 13.2 -> 9.1 %), ``SONIC_PARTIAL_EVERY`` (seconds), ``SONIC_PARTIAL_CTX`` and ``SONIC_FINAL_CTX``
 (encoder window: ``auto`` sizes it to the audio with a floor of 512, ``0`` is the full 30 s, or a number of
 positions; the final uses the full window: the soup loses 1.3 points at 1024, S3), ``SONIC_ESCALATE`` (log-prob threshold).
@@ -31,8 +31,10 @@ import numpy as np
 HERE = Path(__file__).resolve().parent
 sys.path[:0] = [str(HERE.parent.parent), str(HERE.parent.parent / "src")]   # repo root (sonic) and src (package)
 
-from sonic.engine import SAMPLE_RATE, Expert  # noqa: E402
 from sonic.route import cascade  # noqa: E402
+
+SAMPLE_RATE = 16000
+ENGINE = os.environ.get("SONIC_ENGINE", "whisper")   # whisper (whisper.cpp ggml experts) | parakeet (transformers)
 
 MODELS = Path(os.environ.get("SONIC_MODELS", HERE.parent.parent / "models" / "ggml"))
 EXPERTS = os.environ.get("SONIC_EXPERTS", "soup-dora-r16-synth-q8_0,models__lora-dora-r32-q5_0,models__lora-r16-q5_0,models__lora-aug-synth-q5_0").split(",")
@@ -82,7 +84,12 @@ def common_prefix(a: list[str], b: list[str]) -> list[str]:
 
 class Model:
     def __init__(self):
-        self.experts = [Expert(str(MODELS / f"{stem}.bin"), stem, threads=THREADS, language=LANG) for stem in EXPERTS]
+        if ENGINE == "parakeet":       # SONIC_EXPERTS are model ids or paths; no log-prob, so one expert, no cascade
+            from sonic.parakeet import ParakeetExpert
+            self.experts = [ParakeetExpert(stem, threads=THREADS) for stem in EXPERTS]
+        else:
+            from sonic.engine import Expert
+            self.experts = [Expert(str(MODELS / f"{stem}.bin"), stem, threads=THREADS, language=LANG) for stem in EXPERTS]
         self.snap = None
         if SNAP and Path(SNAP).exists():
             from irregular_voice_google import snap

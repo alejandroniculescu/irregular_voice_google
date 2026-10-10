@@ -500,3 +500,91 @@ was a draw on them; 3b is the reproducible number. Padding is neutral for the so
 raw 1/39 clips differ between runs (PER 4.1 / 4.3 %), +1 s pad 1/39 (4.3 / 4.1 %), **30 s pad 0/39 (4.1 / 4.1 %)**,
 equal to S3's soup number. Current honest system: soup q8_0 + cascade t = −0.20 + snap = WER 9.9 %, PER 4.3 %,
 vowel 6.1 %. Latency still unmeasured on an idle box (both machines were loaded).
+
+### S5b (`results/sonic/kit3c/`, M3, padded engine): latency measured, and it is structural
+WER 9.1 %, CER 2.4 %, PER 3.5 %, vowel 4.8 % (the M3 decodes the two x86-unstable clips the lucky way, stably);
+rules 1 and 2 pass. TTFT-stable median **12.7 s** (p90 25.1), TTLT **11.2 s** (p90 22.0); 1-min load median 5.6
+(min 2.4, our run ≈ 4). Prediction (TTLT ≈ 3 s, TTFT ≈ 3 s) **failed by 4×**, and not from load alone: TTFT > TTLT
+on most clips means no partial settles before the final; the full-window soup decode (≈ 4.5 s on the M3) and the
+partials (≈ 2 s per re-decode of the buffer) cannot keep up with 0.5 s steps, and the speculative final blocks
+`accept_chunk`. Against the public Track 2 board (weekly report 2026-09-30: best 8.83 % CER at 1.29 s total,
+takagi 13.66 % at 0.55 s; ranking latency = mean of TTFT-stable and TTLT; see docs/research_2026-10-10.md) a
+large-Whisper soup is ~10× too slow on CPU. The architecture, not the knobs, is the lever.
+
+## 2026-10-10 — Direction (Ale): Christian first, live phone calls; Track 2 for the game
+SAP data access has no date, so the paper is built on Christian's data; the use case is **speech-to-text for his
+live phone calls**, which needs ~1 s from speech to text on modest hardware, the same thing Track 2 rewards (board,
+weekly report 2026-09-30: 8.83 % CER at 1.29 s; S5b: our Whisper soup 12.7 s + 11.2 s). Track 2 is played with the
+public SAP-tuned English Parakeet (`dys-asr/parakeet-rnnt-0.6b-sapc12-syn`); for Christian the candidate is
+NVIDIA `parakeet-tdt-0.6b-v3` (25 European languages incl. German, CC BY 4.0, 0.6B FastConformer-TDT), so one
+streaming wrapper serves both.
+
+## 2026-10-10 — P1: Parakeet v3, unadapted, on his 39 test clips (written before any number)
+`nvidia/parakeet-tdt-0.6b-v3` via transformers 5.15.1, greedy, CPU, 4 threads (ahms i9 pinned to 4 P-cores and the
+M3), offline per clip: CER, WER, PER, vowel error, sec/clip; with and without snap. Compared with the unadapted
+Whisper base (`whisper-large-v3-turbo-german`: WER 48.8 %, CER 20.3 % +snap) and the soup (CER 3.5 %, PER 4.1 %,
+~4.5 s/clip M3).
+Reading: Parakeet is worth adapting to him if unadapted CER ≤ 1.5 × the Whisper base's (≤ 30 %) **and** it decodes a
+clip in ≤ 1 s on 4 cores. Prediction: CER 20–35 % (a general model on his speech, as Whisper base) and 0.3–0.8 s per
+clip, i.e. 5–10× faster than the soup; vowels its weakest class, as for every model so far.
+
+### P1 scored (`ahms:results/sonic/20261010-094701/`, i9 pinned to 4 P-cores, load ≈ 2.5)
+| system | WER | CER | PER | vowel | sec/clip |
+|---|---|---|---|---|---|
+| Parakeet v3 unadapted | 93.4 % | 48.8 % | 53.9 % | 53.3 % | **0.15** (max 0.26) |
+| Parakeet v3 unadapted + snap | 91.7 % | 48.6 % | 53.9 % | 53.7 % | |
+| Whisper base unadapted + snap (table above) | 47.9 % | 20.3 % | | | |
+| soup q8_0 (S3, same box) | 13.2 % | 3.5 % | 4.1 % | 4.8 % | 8.8 |
+
+Checks before reading: hypotheses are German (115 of 132 words known German, 3 English-only, 1 clip in Cyrillic,
+1 empty; 132 words vs 121 reference), and a clean synthetic German sentence (macOS voice "Anna", 7.2 s) came out
+word-perfect in 0.38 s, so the pipeline is sound. Reading: **fails the rule** (CER 48.8 % > 30 %): prediction wrong
+on accuracy (predicted 20–35 %), and beaten on speed (0.15 s vs predicted 0.3–0.8 s; ~60× the soup on this box).
+Unadapted, Parakeet hears him far worse than Whisper does. Whether adaptation closes the gap is a separate question
+(the SAP Parakeet shows the architecture adapts to dysarthric speech, with ~830 h; we have his train split only).
+
+## 2026-10-10 — P2: Parakeet v3 fine-tuned on his train split (written before training)
+P1 failed its rule, but on a premise that broke (speed 60×, not 5–10×), so one cheap test of adaptation, agreed
+with Ale. Full fine-tune of `nvidia/parakeet-tdt-0.6b-v3` (transformers `ParakeetForTDT`, TDT loss) on his 278
+train clips, AdamW lr 1e-5, bf16 autocast, one RTX 4090; model selection on the 35 dev clips (CER each epoch, best
+kept, stop after 5 epochs without improvement); the 39 test clips scored once at the end, CPU, as P1.
+Reading: test CER ≤ 7 % (2 × the soup's 3.5 %) → the fast model is the phone-call candidate and goes into the
+streaming wrapper as the model that streams; 7–15 % → it streams the partials and the soup (or Whisper DoRA) does
+the final, a two-expert story; > 15 % → park Parakeet for German. Prediction: test CER 8–15 %, PER similar, vowels
+worst; 278 clips move a general model a long way (Whisper base 20 → DoRA 4 %), but Parakeet starts from 49 %.
+
+### P2 interim: training stopped by ahms crashes (epoch 16 of ≤ 40), not converged
+Run 1 died at the epoch-15 save on a `TypeError` inside the stdlib `re` compiler; run 2 (same seed, reproduced run 1
+to the digit) ran to epoch 16, then ahms hard-reset at 12:38:44 (log stops, no shutdown, no MCE logged; i9-14900K,
+microcode 0x133). Dev CER: 46.5 % (start) → 67.2 → 61.5 → 52.8 → 44.6 → … → 18.7 (ep 14) → 17.0 → **13.7 % (ep 16)**,
+still falling ~2–3 points per epoch. Test, epoch-16 checkpoint (`ahms:results/sonic/20261010-125945/`, CPU 4 cores):
+
+| system | WER | CER | PER | vowel | sec/clip |
+|---|---|---|---|---|---|
+| Parakeet v3 unadapted (P1) | 93.4 % | 48.8 % | 53.9 % | 53.3 % | 0.15 |
+| **Parakeet v3, his train split, epoch 16** | 38.8 % | 16.7 % | 18.9 % | 13.5 % | 0.15 |
+| + snap | 36.4 % | 16.7 % | 18.7 % | 15.3 % | |
+| soup q8_0 (S3) | 13.2 % | 3.5 % | 4.1 % | 4.8 % | 8.8 |
+
+Not read against the rule yet (training was cut off while improving). Run 3 to completion on the other GPU next.
+
+### P2 scored (run 3, ahms GPU 1, CPUs 2-7 after the faulty-core split; best epoch 32 of 37)
+Faulty ahms cores: logical CPUs 0, 8, 10 (cereVox's September crash logs); run 1's `TypeError` in `re` and the
+12:38 hard reset happened with CPU 0 in use. Run 3 used GPU 1 and CPUs 2-7, ran to its stopping rule (5 epochs
+without dev improvement) with no fault. Dev CER: 46.5 % → 11.5 (ep 20) → 9.6 (27) → 8.6 (29) → **7.5 % (ep 32)**.
+Test, once (`ahms:results/sonic/20261010-130658/`, CPU 2-5 = 2 P-cores with HT, 4 threads):
+
+| system | WER | CER | PER | vowel | sec/clip |
+|---|---|---|---|---|---|
+| Parakeet v3 unadapted (P1) | 93.4 % | 48.8 % | 53.9 % | 53.3 % | 0.15 |
+| Parakeet v3, epoch 16 (crash-stopped run 2) | 38.8 % | 16.7 % | 18.9 % | 13.5 % | 0.15 |
+| **Parakeet v3, his train split (run 3, ep 32)** | **28.9 %** | **8.9 %** | **11.9 %** | **8.7 %** | **0.21** |
+| + snap | 27.3 % | 9.5 % | 12.3 % | 10.0 % | |
+| soup q8_0 (S3) | 13.2 % | 3.5 % | 4.1 % | 4.8 % | 8.8 |
+| Whisper DoRA alone, whisper.cpp q5_0 (S1) | 19.8 % | 5.6 % | 7.6 % | 7.0 % | 3.3 (M3) |
+
+Reading: CER 8.9 % is in the 7–15 % band → Parakeet **streams the partials** and a Whisper expert does the final (a
+two-expert system: fast streamer + accurate finaliser). Prediction (CER 8–15 %) held. 278 clips took it from 48.8
+to 8.9 % CER, 2.5× the soup's CER at ~1/40 of its cost. Snap hurts it slightly (+0.6 CER): its errors are not the
+non-word spellings snap fixes. Not tuned: lr, epochs, augmentation, encoder-only training; dev was still noisy
+(±1.5 points epoch to epoch). Timing here is on 2 physical cores (hyperthreaded), slower than P1's 4.
