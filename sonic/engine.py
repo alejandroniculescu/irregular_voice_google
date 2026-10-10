@@ -55,9 +55,8 @@ class Expert:
         t = time.perf_counter()
         ctx = audio_ctx_for(len(audio)) if ctx is None else ctx
         max_tokens = max(8, math.ceil(len(audio) / SAMPLE_RATE * TOKENS_PER_SECOND))
-        # zero-pad to 30 s ourselves: on x86, short input made the same decode differ run to run (log-prob jitter,
-        # occasional word flips; Track 2 rule 2 failed on 2/39, S5a), as if past-the-end samples were uninitialized;
-        # padded, it repeats exactly and equals the modal unpadded result
+        # zero-pad to 30 s ourselves: neutral (D1: identical output padded or not) and kept as a guard. It was added
+        # for run-to-run jitter on ahms (S5a) that D1 traced to the faulty CPU 0, not to whisper.cpp
         audio = np.pad(audio.astype(np.float32), (0, max(0, PAD_TO - len(audio))))
         segs = self.model.transcribe(audio, audio_ctx=ctx, max_tokens=max_tokens)
         text = " ".join(s.text.strip() for s in segs).strip()

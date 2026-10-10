@@ -14,10 +14,10 @@ def read_wav(path: Path) -> np.ndarray:
         return np.frombuffer(f.readframes(f.getnframes()), np.int16).astype(np.float32) / 32768
 
 
-def test_clips(manifest: Path) -> list[dict]:
+def test_clips(manifest: Path, split: str = "test") -> list[dict]:
     with manifest.open(encoding="utf-8") as f:
         return [{"audio": str(manifest.parent / r["audio"]), "reference": r["text"]}
-                for r in csv.DictReader(f) if r["split"] == "test"]
+                for r in csv.DictReader(f) if r["split"] == split]
 
 
 def write_csv(path: Path, rows: list[dict]) -> None:

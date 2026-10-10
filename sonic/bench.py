@@ -37,9 +37,10 @@ def main(argv=None) -> None:
                         help="names from EXPERTS, or name=path.bin for any other ggml model")
     parser.add_argument("--no-route", action="store_true", help="score the experts only (e.g. a quantization sweep)")
     parser.add_argument("--threads", type=int, default=4)
+    parser.add_argument("--split", default="test", help="manifest split to decode (dev for fitting routers)")
     args = parser.parse_args(argv)
 
-    clips = test_clips(Path(args.manifest))
+    clips = test_clips(Path(args.manifest), args.split)
     audio = [read_wav(Path(c["audio"])) for c in clips]
     out = Path("results/sonic") / datetime.now().strftime("%Y%m%d-%H%M%S"); out.mkdir(parents=True)
     g2p = gruut_g2p()

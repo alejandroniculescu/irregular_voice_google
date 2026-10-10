@@ -49,15 +49,28 @@ class Decode:
 
 class ParakeetExpert(Parakeet):
     """The ``sonic.engine.Expert`` interface for the streaming model: ``decode(audio, ctx)`` (``ctx`` ignored: the
-    FastConformer encoder always runs over exactly the audio it is given). No log-prob yet (0.0)."""
+    FastConformer encoder always runs over exactly the audio it is given). ``logprob`` is the transducer
+    log-likelihood of the decoded text given the audio (summed over alignments; the training loss, which is
+    already per label token): a confidence for the router; computed only with ``confidence=True`` (one more forward pass)."""
 
-    def __init__(self, model_id: str, threads: int = 4):
+    def __init__(self, model_id: str, threads: int = 4, confidence: bool = False):
         super().__init__(model_id, threads)
-        self.name = model_id
+        self.name, self.confidence = model_id, confidence
 
     def decode(self, audio: np.ndarray, ctx: int | None = None) -> Decode:
-        text, sec = super().decode(audio)
-        return Decode(text, 0.0, sec)
+        t = time.perf_counter()
+        text, _ = super().decode(audio)
+        lp = 0.0
+        if self.confidence:
+            lp = self.logprob(audio, text)
+        return Decode(text, lp, time.perf_counter() - t)
+
+    def logprob(self, audio: np.ndarray, text: str) -> float:
+        if not text:
+            return float("-inf")
+        inputs = self.processor(audio.astype(np.float32), text=[text], sampling_rate=SAMPLE_RATE, return_tensors="pt")
+        with torch.inference_mode():
+            return -float(self.model(**inputs).loss)      # NeMo "mean" reduction: already per label token
 
 
 def main(argv=None) -> None:
@@ -70,17 +83,18 @@ def main(argv=None) -> None:
     parser.add_argument("--model", default="nvidia/parakeet-tdt-0.6b-v3")
     parser.add_argument("--manifest", default="data/processed/trim/manifest.csv")
     parser.add_argument("--threads", type=int, default=4)
+    parser.add_argument("--split", default="test", help="manifest split to decode (dev for fitting routers)")
     args = parser.parse_args(argv)
 
-    clips = test_clips(Path(args.manifest))
-    expert = Parakeet(args.model, threads=args.threads)
+    clips = test_clips(Path(args.manifest), args.split)
+    expert = ParakeetExpert(args.model, threads=args.threads, confidence=True)
     expert.decode(np.zeros(SAMPLE_RATE, np.float32))                  # warm-up, not timed
     rows = []
     for c in clips:
-        text, sec = expert.decode(read_wav(Path(c["audio"])))
-        rows.append({**c, "hypothesis": text, "seconds": round(sec, 3)})
+        d = expert.decode(read_wav(Path(c["audio"])))
+        rows.append({**c, "hypothesis": d.text, "logprob": round(d.logprob, 4), "seconds": round(d.seconds, 3)})
     out = Path("results/sonic") / datetime.now().strftime("%Y%m%d-%H%M%S"); out.mkdir(parents=True)
-    name = args.model.split("/")[-1]
+    name = args.model.rstrip("/").split("/")[-1] + ("" if args.split == "test" else f"@{args.split}")
     write_csv(out / f"{name}.csv", rows)
     g2p, sn = gruut_g2p(), snap.for_speaker(args.manifest)
     t = [r["seconds"] for r in rows]

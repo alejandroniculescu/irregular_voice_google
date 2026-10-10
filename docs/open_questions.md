@@ -588,3 +588,140 @@ two-expert system: fast streamer + accurate finaliser). Prediction (CER 8–15 %
 to 8.9 % CER, 2.5× the soup's CER at ~1/40 of its cost. Snap hurts it slightly (+0.6 CER): its errors are not the
 non-word spellings snap fixes. Not tuned: lr, epochs, augmentation, encoder-only training; dev was still noisy
 (±1.5 points epoch to epoch). Timing here is on 2 physical cores (hyperthreaded), slower than P1's 4.
+
+## 2026-10-10 — D1: was the x86 decode jitter the faulty core? (written before the run)
+S5a's jitter (and the 30 s padding fix in `engine.py`) was measured pinned to CPUs 0,2,4,6, and CPU 0 is faulty.
+Rerun on CPUs 2-5 only: soup q8_0, full window, 4 threads, the 39 test clips, raw input × 3 runs, 30 s pad × 2.
+Reading: raw 0/39 clips differ across its 3 runs → the jitter was CPU 0, padding is not needed for determinism (kept
+only if neutral, which it was) and S5a's explanation is withdrawn; raw ≥ 1/39 → whisper.cpp itself, padding stays.
+Prediction: 0/39 (the M3 never jittered, and the other symptoms on CPU 0 were hardware faults).
+
+## 2026-10-10 — M1: does Parakeet add complementary errors to the mixture? (written before any number)
+Idea (Ale): add Parakeet to the MoE, since a mixture gains only where experts err differently, and Parakeet is a
+different architecture (FastConformer-TDT) from the three Whisper adapters, which share one base. Offline, per-clip
+CSVs on the 39 test clips: Parakeet run 3 (P2), soup q8_0 (S3), DoRA / r16 / aug-synth q5_0 (S1). Measures:
+(a) per-word error overlap with the soup: of the reference words the soup gets wrong, the share Parakeet gets right
+(and the reverse); the same for DoRA vs soup as the within-Whisper baseline; (b) oracle PER/CER per clip over
+{soup} vs {soup, Parakeet} vs {soup, DoRA, r16, synth} vs all five; (c) the reference-free medoid router over the
+same sets (route.medoid, no confidence needed, since the two families' confidences are not on one scale).
+Reading: Parakeet is complementary if (a) it rescues a larger share of the soup's errors than DoRA does, and (b)
+adding it lowers the oracle by more than adding all three Whisper experts. Practical gain only if (c) medoid over a
+set with Parakeet beats the soup alone by ≥ 0.5 PER points. Prediction: (a) and (b) yes (different architecture,
+different errors); (c) no: with two strong-ish experts the medoid has no majority to work with, and Parakeet is
+2.5× worse, so routing needs a confidence that knows when Parakeet is right.
+Bar for any router (Ale, 2026-10-10): it counts only if it lowers WER, CER **and** PER against the best single
+expert at once.
+
+### M1 scored (offline, `scratchpad/m1.py` over the saved per-clip CSVs)
+(a) Rescue: of the soup's 15 wrong reference words, **Parakeet gets 5 right (33 %)**, DoRA 2 (13 %). Of Parakeet's
+33, the soup gets 23 right (70 %); of DoRA's 23, the soup gets 10 (43 %).
+(b) Oracle (per clip, the member with the fewest phone errors):
+
+| experts | WER | CER | PER | vowel |
+|---|---|---|---|---|
+| soup alone | 13.2 % | 3.5 % | 4.1 % | 4.8 % |
+| soup + DoRA | 12.4 % | 2.6 % | 3.5 % | 4.4 % |
+| soup + r16 | 10.7 % | 3.0 % | 3.2 % | 3.9 % |
+| soup + aug-synth | 10.7 % | 2.5 % | 2.7 % | 3.5 % |
+| **soup + Parakeet** | **10.7 %** | **1.9 %** | **2.4 %** | **3.1 %** |
+| soup + 3 Whisper | 8.3 % | 1.2 % | 1.5 % | 2.6 % |
+| all five | 7.4 % | 1.1 % | 1.4 % | 2.2 % |
+
+(c) Medoid router: soup + 3 Whisper 3.8 % PER (WER 12.4, CER 3.3); all five 4.1 % (= the soup); 3 Whisper +
+Parakeet 5.2 %. None lowers WER, CER and PER together below the soup.
+Reading: (a) **yes**: Parakeet rescues 2.5× the share DoRA does, though it is the weakest single expert (CER 8.9 %
+vs DoRA 5.6 %): different architecture, different errors. (b) as worded, **no** (adding three Whisper experts lowers
+the oracle more than adding Parakeet), but the comparison was unfair (more members, more draws); at equal size
+Parakeet is the best partner for the soup on every metric (pair oracle PER 2.4 % vs 2.7–3.5 % for any Whisper
+partner). (c) **no**, as predicted: agreement voting cannot tell when the minority expert is right. The headroom is
+real (soup + Parakeet oracle −1.7 PER, −1.6 CER, −2.5 WER points); realising it needs a confidence router fitted on
+dev, not on these test clips. Prediction held on all three.
+
+## 2026-10-10 — R1: a confidence router over soup + Parakeet (written before the dev decodes)
+Experts: soup q8_0 (full window; confidence = mean token log-prob) and Parakeet run 3 (confidence = −TDT loss per
+label token of its own hypothesis). The two confidences are on different scales, so each is z-scored with its mean
+and SD over the 35 **dev** clips. Rules, all fitted on dev only, then scored once on the 39 test clips:
+- **R1b (accuracy):** both decode; pick the expert with the higher z. No threshold.
+- **R1c (latency):** Parakeet decodes; if its z ≥ t the final is Parakeet's, else the soup decodes and its text is
+  the final. t from a grid on dev (the lowest dev PER; ties → the t that escalates fewer clips).
+Bar (Ale): counts only if WER, CER **and** PER on test are all below the soup alone (13.2 / 3.5 / 4.1 %), and for
+R1c also report the share of clips that reach the soup (latency cost).
+Prediction: R1b lowers PER and CER by 0.3–0.8 points but not WER (Parakeet's wins are partial words: CER/PER, while
+its whole-word errors are more numerous); R1c fails the bar: Parakeet alone is 2.5× worse, so it must escalate most
+clips, and its confidence is unlikely to be sharp enough on 35 dev clips to keep the clips it gets right.
+
+### D1 scored (`ahms:results/sonic/padtest_goodcores_*.json`, CPUs 2-5): the jitter was CPU 0
+Raw input, 3 runs: **0/39** clips differ; 30 s pad, 2 runs: 0/39; raw vs padded: 0/39 differ; soup WER 13.2 %,
+CER 3.5 %, PER 4.1 %, vowel 4.8 % every run. Prediction held. **S5a's explanation is withdrawn**: whisper.cpp is
+deterministic on x86; the log-prob jitter, the word flips and the rule-2 failure came from the faulty core. The
+padding stays (neutral) with a corrected comment. Consequence: kit run 3b (WER 9.9 %, PER 4.3 %) also ran with
+CPU 0; the clean number for the soup + cascade + snap system is the M3's, WER 9.1 %, CER 2.4 %, PER 3.5 %,
+vowel 4.8 % (S5/S5b, reproduced twice). Every ahms result before 2026-10-10 13:00 that used CPU 0 is suspect for
+timing and for rare decode flips; the accuracy tables reproduced on the M3 or on good cores stand.
+
+### R1 scored (`scratchpad/r1.py`; dev decodes `ahms:results/sonic/20261010-1324*`, CPUs 6-7)
+Dev confidence: soup mean −0.062 (SD 0.071), Parakeet −0.129 (SD 0.130).
+
+| system | dev WER / CER / PER / vowel | test WER / CER / PER / vowel |
+|---|---|---|
+| soup alone | 12.4 / 3.5 / 4.6 / 4.7 % | 13.2 / 3.5 / 4.1 / 4.8 % |
+| Parakeet alone | 25.5 / 7.2 / 9.4 / 5.5 % | 28.9 / 8.9 / 11.9 / 8.7 % |
+| R1b, higher z wins | 18.2 / 4.7 / 6.8 / 3.9 % (Parakeet on 19/35) | 13.2 / 3.3 / 4.0 / 3.9 % (Parakeet on 15/39) |
+| R1c, dev-best t | t = +1.00 = always the soup | = soup |
+
+Reading: **both fail the bar.** R1b is clearly worse than the soup on dev and only −0.2 CER / −0.1 PER on test with
+WER unchanged; prediction (−0.3 to −0.8 on PER/CER) missed. R1c held its prediction (no t keeps Parakeet's wins).
+Self-confidence of two different models does not say which is right: Parakeet is confident on clips the soup gets
+right. The one consistent signal: vowel error drops on both splits (dev 4.7 → 3.9, test 4.8 → 3.9).
+
+## 2026-10-10 — R2: cross-scoring the two hypotheses with both models (written before any number)
+For each clip, two candidates: the soup's text and Parakeet's text. Each is scored by both models on the same
+audio: Whisper soup (HF transformers, merged in memory as `soup.py` does, teacher-forced, mean token log-prob after
+the `de / transcribe / notimestamps` prefix) and Parakeet run 3 (−TDT loss per token). Score(h) = z_W(h) + z_P(h),
+each judge z-scored over its dev scores of both candidates; the higher score is the final. No threshold, nothing
+else fitted. Secondary, reported but not the decision: the weight on Parakeet's judgement from a dev grid.
+Reading: the same bar (WER, CER and PER all below the soup alone on test). Prediction: passes on CER and PER by
+0.3–0.8 points, WER within one word of the soup; each judge prefers its own hypothesis, but on the clips where they
+disagree the other judge's vote decides, which is what self-confidence (R1) could not do.
+
+## 2026-10-10 — S6: Parakeet alone in the streaming harness (written before the run)
+`local_decode.py` on the 39 clips with `SONIC_ENGINE=parakeet`, `SONIC_EXPERTS=models/parakeet-v3-christian-run3`
+(one expert: it streams and it finalises; no cascade), `SONIC_PARTIAL_EVERY=0.25`, 4 threads, ahms CPUs 2-5
+(2 P-cores with HT; x86, our share). LocalAgreement-2, energy gate, shedding and the speculative final as before.
+Reading: latency against the board (takagi 0.40 + 0.15 s; JLShen 0.91 + 0.38 s) and rules 1-2; accuracy should
+equal P2 (WER 28.9 %, CER 8.9 %) since the final is the same decode. Prediction: TTLT median ≤ 0.4 s (one decode
+of the trimmed audio, often already done speculatively); TTFT-stable median 0.7–1.2 s (first word + two agreeing
+decodes 0.25 s apart + decode cost + the 0.2 s gate); rules 1 and 2 pass. If so, the speed side of the phone-call
+system is solved on 2 cores and the open problem is only accuracy (R2 / better adaptation).
+
+### R2 scored (`sonic/xscore.py`, `sonic/xscore_eval.py`; `results/sonic/r2/`, GPU 1 + CPUs 6-7)
+Bug found and fixed before reading: run 1 of the Whisper judge tokenised `" " + text` (training used no leading
+space), so every first token was off and the soup's own text scored −0.89/token against whisper.cpp's −0.06. Fixed,
+the judge matches whisper.cpp within ~0.006/token (8 dev clips: −0.014 vs −0.017 …); run 1 kept as
+`judge_whisper_run1.csv`, not used.
+
+| system | dev WER / CER / PER / vowel | test WER / CER / PER / vowel |
+|---|---|---|
+| soup alone | 12.4 / 3.5 / 4.6 / 4.7 % | 13.2 / 3.5 / 4.1 / 4.8 % |
+| Parakeet alone | 25.5 / 7.2 / 9.4 / 5.5 % | 28.9 / 8.9 / 11.9 / 8.7 % |
+| Whisper judge only | 11.7 / 3.4 / 4.4 / 4.7 % | 13.2 / 3.5 / 4.1 / 4.8 % (= soup) |
+| Parakeet judge only | 24.8 / 6.8 / 9.0 / 5.1 % | 24.8 / 7.7 / 10.2 / 7.9 % |
+| **R2, equal weights (the pre-registered rule)** | 13.1 / 3.3 / 4.3 / 2.4 % | **11.6 / 3.1 / 3.3 / 3.5 %** |
+| R2, w_parakeet = 0.25 (chosen on dev, secondary) | 10.9 / 2.5 / 3.3 / 2.7 % | 12.4 / 3.3 / 4.0 / 4.4 % |
+
+Reading: **R2 passes the bar on test** (WER −1.6, CER −0.4, PER −0.8 points; vowel −1.3) with the rule fixed in
+advance. Prediction held (CER/PER −0.3 to −0.8; WER within a word: it is two words better). Caveat from dev: there
+the same rule lowers CER and PER but not WER (+0.7 = one word), and the dev-chosen weight helps on dev but only
+marginally on test. So: CER and PER improve on both splits; WER moves by one or two words either way, within this
+test set's resolution (one word = 0.8 points). Each judge alone prefers its own model's text (Parakeet judge picks
+Parakeet 34/35); only together do they decide. Cost: both experts decode, plus two scoring passes (~0.2 s for
+Parakeet; Whisper teacher-forcing ~ one encoder pass).
+
+### S6 scored (`ahms:results/sonic/kit_s6/`, CPUs 2-5 = 2 P-cores with HT, x86)
+WER 28.9 %, CER 8.9 %, PER 11.9 %, vowel 8.7 % (= P2, as expected); **TTFT-stable median 1.12 s** (p90 2.89),
+**TTLT median 0.30 s** (p90 0.50); rules 1 and 2 pass. Total 1.42 s (ranking latency, the mean, 0.71 s), against
+the soup's 12.7 + 11.2 s (S5b, M3): ~17× faster on fewer, slower cores. Board for scale (other data, other task):
+JLShen 0.91 + 0.38 s, takagi 0.40 + 0.15 s. Prediction held on both (TTLT ≤ 0.4 s; TTFT-stable 0.7–1.2 s).
+Reading: the speed side of the live-call system works on 2 cores with re-decoding alone (no cache-aware encoder);
+the open problem is accuracy at that latency. TTFT is now mostly LocalAgreement (two agreeing decodes 0.25 s apart)
+plus the 0.2 s gate; the p90 comes from long clips, where each re-decode grows with the buffer.
